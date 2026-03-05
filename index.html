@@ -3,101 +3,62 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>LPG Insight - แดชบอร์ดวิเคราะห์การใช้แก๊ส</title>
+    <title>LPG Insight - Mobile Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     
-    <!-- Leaflet.js (แผนที่ฟรี ไม่ต้องใช้ API Key) -->
+    <!-- Leaflet.js (Free Map) -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap');
-        
         body { font-family: 'Kanit', sans-serif; background-color: #0f172a; color: white; overflow: hidden; margin: 0; padding: 0; }
-        
-        #map { 
-            position: absolute; top: 0; bottom: 0; left: 0; right: 0; z-index: 1;
-        }
-
-        .map-overlay {
-            position: absolute; z-index: 1000; pointer-events: none; width: 100%;
-        }
-
+        #map { position: absolute; top: 0; bottom: 0; left: 0; right: 0; z-index: 1; }
+        .map-overlay { position: absolute; z-index: 1000; pointer-events: none; width: 100%; }
         .interactable { pointer-events: auto; }
-
-        .glass-ui {
-            background: rgba(15, 23, 42, 0.8);
-            backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        .user-dot {
-            width: 14px; height: 14px; background: #3b82f6; border: 3px solid white;
-            border-radius: 50%; box-shadow: 0 0 15px rgba(59, 130, 246, 0.8);
-        }
-
+        .glass-ui { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); }
+        .user-dot { width: 14px; height: 14px; background: #3b82f6; border: 3px solid white; border-radius: 50%; box-shadow: 0 0 15px rgba(59, 130, 246, 0.8); }
         .leaflet-control-attribution { display: none; }
-
-        #search-results-panel {
-            max-height: 50vh; overflow-y: auto;
-        }
-
-        /* Slide Animation */
-        .slide-up { transform: translateY(0); transition: transform 0.4s ease-out; }
-        .slide-down { transform: translateY(100%); transition: transform 0.4s ease-in; }
-        
-        .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+        .safe-bottom { padding-bottom: calc(1rem + env(safe-area-inset-bottom)); }
+        input { -webkit-appearance: none; border-radius: 1rem; }
     </style>
 </head>
 <body>
 
-    <!-- แผนที่พื้นหลัง -->
     <div id="map"></div>
 
-    <!-- ส่วนบน: แถบค้นหาและแดชบอร์ดข้อมูล -->
+    <!-- UI Overlay -->
     <div class="map-overlay top-0 p-4 space-y-3">
-        <!-- แถบค้นหา -->
+        <!-- Search Bar -->
         <div class="glass-ui interactable flex items-center gap-2 p-2 rounded-2xl shadow-2xl">
             <div class="p-2 text-blue-400"><i data-lucide="search" class="w-5 h-5"></i></div>
-            <input type="text" id="search-input" 
-                   onfocus="showSearchPanel()" 
-                   oninput="filterSearch()"
-                   class="bg-transparent border-none outline-none text-sm w-full placeholder:text-slate-500 font-medium" 
-                   placeholder="ค้นหาปั๊มที่บันทึกไว้...">
-            <button onclick="openGoogleMapsSearch()" class="bg-blue-600 p-2 rounded-xl text-white shadow-lg shadow-blue-900/40">
+            <input type="text" id="search-input" onfocus="showSearchPanel()" class="bg-transparent border-none outline-none text-sm w-full placeholder:text-slate-500 font-medium text-white" placeholder="ค้นหาปั๊มที่บันทึกไว้...">
+            <button onclick="openGoogleMapsSearch()" class="bg-blue-600 p-2 rounded-xl text-white">
                 <i data-lucide="map" class="w-5 h-5"></i>
             </button>
         </div>
 
-        <!-- รายการผลการค้นหา (ซ่อนอยู่) -->
-        <div id="search-panel" class="hidden glass-ui interactable rounded-2xl p-4 shadow-2xl mt-1 border border-white/10 max-h-[60vh] overflow-y-auto">
+        <!-- Search Panel -->
+        <div id="search-panel" class="hidden glass-ui interactable rounded-2xl p-4 shadow-2xl mt-1 border border-white/10 max-h-[50vh] overflow-y-auto">
             <div class="flex justify-between items-center mb-3">
                 <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">ปั๊มใกล้เคียง</span>
-                <button onclick="closeSearchPanel()" class="text-slate-500"><i data-lucide="x" class="w-4 h-4"></i></button>
+                <button onclick="closeSearchPanel()" class="p-1"><i data-lucide="x" class="w-4 h-4"></i></button>
             </div>
-            <div id="search-results-list" class="space-y-2">
-                <!-- ข้อมูลปั๊มจะถูกใส่ที่นี่ -->
-                <div class="text-center py-4 text-xs text-slate-500">ไม่พบปั๊มในระยะใกล้</div>
-            </div>
-            <div class="mt-4 pt-3 border-t border-white/5">
-                <button onclick="openGoogleMapsSearch()" class="w-full bg-blue-600/10 text-blue-400 py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
-                    <i data-lucide="external-link" class="w-4 h-4"></i> ค้นหาปั๊ม LPG บน Google Maps
-                </button>
-            </div>
+            <div id="search-results-list" class="space-y-2"></div>
         </div>
 
-        <!-- แถบแสดงสถานะรถ -->
+        <!-- Dashboard Stats -->
         <div class="flex gap-2">
-            <div class="glass-ui interactable p-3 rounded-2xl border-l-4 border-blue-500 flex-1 shadow-xl">
-                <span class="text-[9px] font-bold text-blue-400 uppercase block tracking-wider">ความเร็ว</span>
+            <div class="glass-ui interactable p-3 rounded-2xl border-l-4 border-blue-500 flex-1">
+                <span class="text-[9px] font-bold text-blue-400 uppercase block">ความเร็ว</span>
                 <div class="flex items-baseline gap-1">
                     <span class="text-2xl font-black" id="current-speed">0</span>
                     <span class="text-[8px] text-slate-500 uppercase">km/h</span>
                 </div>
             </div>
-            <div class="glass-ui interactable p-3 rounded-2xl border-l-4 border-green-500 flex-1 shadow-xl">
-                <span class="text-[9px] font-bold text-green-400 uppercase block tracking-wider">วิ่งได้อีกประมาณ</span>
+            <div class="glass-ui interactable p-3 rounded-2xl border-l-4 border-green-500 flex-1">
+                <span class="text-[9px] font-bold text-green-400 uppercase block">วิ่งได้อีก</span>
                 <div class="flex items-baseline gap-1">
                     <span class="text-2xl font-black" id="est-range">--</span>
                     <span class="text-[8px] text-slate-500 uppercase">km</span>
@@ -106,141 +67,82 @@
         </div>
     </div>
 
-    <!-- ส่วนกลาง: แถบข้อมูลสรุปค่าเฉลี่ย -->
-    <div class="map-overlay bottom-[100px] px-4">
-        <div class="glass-ui interactable grid grid-cols-3 gap-2 px-4 py-3 rounded-3xl shadow-2xl border border-white/5">
+    <!-- Center Metrics -->
+    <div class="map-overlay bottom-[110px] px-4">
+        <div class="glass-ui interactable grid grid-cols-3 gap-2 px-4 py-3 rounded-3xl border border-white/5">
             <div class="text-center border-r border-white/10">
-                <div class="text-[9px] text-slate-400 font-bold uppercase">฿ / KM</div>
+                <div class="text-[9px] text-slate-400 font-bold uppercase tracking-tighter">฿ / KM</div>
                 <div class="text-sm font-bold text-blue-300" id="avg-cost">0.00</div>
             </div>
             <div class="text-center border-r border-white/10">
-                <div class="text-[9px] text-slate-400 font-bold uppercase">แก็สในถัง</div>
+                <div class="text-[9px] text-slate-400 font-bold uppercase tracking-tighter">แก็สคงเหลือ</div>
                 <div class="text-sm font-bold text-blue-300" id="gas-remain">0.0</div>
             </div>
             <div class="text-center">
-                <div class="text-[9px] text-slate-400 font-bold uppercase">ทริปล่าสุด</div>
-                <div class="text-sm font-bold text-blue-300"><span id="trip-dist">0</span> <span class="text-[8px]">กม.</span></div>
+                <div class="text-[9px] text-slate-400 font-bold uppercase tracking-tighter">ทริปล่าสุด</div>
+                <div class="text-sm font-bold text-blue-300" id="trip-dist">0</div>
             </div>
         </div>
     </div>
 
-    <!-- ปุ่มควบคุมด้านล่าง -->
+    <!-- Action Buttons -->
     <div class="map-overlay bottom-0 p-6 flex justify-between items-center safe-bottom">
         <button onclick="saveCurrentLocationManual()" class="interactable bg-white text-slate-900 p-4 rounded-full shadow-2xl active:scale-90 transition-transform">
             <i data-lucide="map-pin" class="w-6 h-6"></i>
         </button>
-        
-        <button onclick="toggleForm()" class="interactable bg-blue-600 text-white px-8 py-4 rounded-full shadow-2xl font-bold flex items-center gap-2 active:scale-95 transition-transform">
+        <button onclick="toggleForm()" class="interactable bg-blue-600 text-white px-8 py-4 rounded-full shadow-2xl font-bold flex items-center gap-2 active:scale-95">
             <i data-lucide="plus" class="w-5 h-5"></i> บันทึกเติมแก๊ส
         </button>
     </div>
 
-    <!-- หน้าต่างบันทึกข้อมูล (Slide Up) -->
+    <!-- Slide Up Form -->
     <div id="form-panel" class="fixed inset-x-0 bottom-0 z-[2000] glass-ui translate-y-full transition-transform duration-500 rounded-t-[3rem] p-8 border-t border-white/10 interactable safe-bottom">
         <div class="w-12 h-1 bg-white/20 rounded-full mx-auto mb-8" onclick="toggleForm()"></div>
-        <h3 class="text-xl font-bold mb-6 flex items-center gap-2">
-            <i data-lucide="fuel" class="text-orange-400"></i> บันทึกข้อมูลการเติมแก๊ส
-        </h3>
-        
+        <h3 class="text-xl font-bold mb-6 flex items-center gap-2"><i data-lucide="fuel" class="text-orange-400"></i> บันทึกข้อมูลการเติม</h3>
         <div class="grid grid-cols-2 gap-4 mb-4">
             <div class="space-y-1">
-                <label class="text-[10px] font-bold text-slate-400 uppercase ml-1">เลขไมล์ล่าสุด (กม.)</label>
-                <input type="number" inputmode="numeric" id="input-odometer" class="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-white font-bold outline-none focus:border-blue-500" placeholder="0">
+                <label class="text-[10px] font-bold text-slate-400 uppercase">เลขไมล์ล่าสุด</label>
+                <input type="number" id="input-odometer" class="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-white font-bold" placeholder="0">
             </div>
             <div class="space-y-1">
-                <label class="text-[10px] font-bold text-slate-400 uppercase ml-1">ราคา/ลิตร</label>
-                <input type="number" step="0.01" inputmode="decimal" id="input-price-per-liter" class="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-white font-bold outline-none focus:border-blue-500" placeholder="15.50">
+                <label class="text-[10px] font-bold text-slate-400 uppercase">ราคา/ลิตร</label>
+                <input type="number" step="0.01" id="input-price-per-liter" class="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-white font-bold" placeholder="15.50">
             </div>
         </div>
-
         <div class="grid grid-cols-2 gap-4 mb-8">
             <div class="space-y-1">
-                <label class="text-[10px] font-bold text-slate-400 uppercase ml-1">จำนวนเงิน (บาท)</label>
-                <input type="number" inputmode="numeric" id="input-amount" class="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-white font-bold outline-none focus:border-blue-500" placeholder="0">
+                <label class="text-[10px] font-bold text-slate-400 uppercase">จำนวนเงิน (บาท)</label>
+                <input type="number" id="input-amount" class="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-white font-bold" placeholder="0">
             </div>
             <div class="space-y-1 opacity-50">
-                <label class="text-[10px] font-bold text-slate-400 uppercase ml-1">จำนวนลิตร</label>
-                <input type="number" id="input-liters" class="w-full bg-white/10 border-0 rounded-2xl p-4 text-white font-bold" readonly placeholder="0.00">
+                <label class="text-[10px] font-bold text-slate-400 uppercase">จำนวนลิตร</label>
+                <input type="number" id="input-liters" class="w-full bg-white/10 border-0 rounded-2xl p-4 text-white font-bold" readonly>
             </div>
         </div>
-
-        <button onclick="addRefillRecord()" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-5 rounded-2xl font-bold shadow-xl transition-all mb-4">
-            ยืนยันบันทึกข้อมูล
-        </button>
-        <button onclick="toggleForm()" class="w-full text-slate-400 font-bold py-2">ยกเลิก</button>
+        <button onclick="addRefillRecord()" class="w-full bg-blue-600 text-white py-5 rounded-2xl font-bold shadow-xl">ยืนยันบันทึกข้อมูล</button>
+        <button onclick="toggleForm()" class="w-full text-slate-400 font-bold py-4">ยกเลิก</button>
     </div>
 
-    <!-- Firebase & Logic Scripts -->
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, onSnapshot, addDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // CONFIG
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'lpg-insight-v4';
-
-        // STATE
-        let records = [];
-        let stations = [];
-        let speedSamples = [];
+        // --- การจัดการข้อมูล (Hybrid Cloud/Local) ---
+        let records = JSON.parse(localStorage.getItem('lpg_records')) || [];
+        let stations = JSON.parse(localStorage.getItem('lpg_stations')) || [];
         let map, userMarker, currentPos = [13.7563, 100.5018];
         let isFormOpen = false;
 
-        // AUTH
-        onAuthStateChanged(auth, (user) => {
-            if (user) {
-                syncData(user.uid);
-            } else {
-                signInAnonymously(auth);
+        // เชื่อมต่อ Firebase (ถ้ามี Config)
+        let db = null;
+        try {
+            if (typeof __firebase_config !== 'undefined') {
+                const { initializeApp } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js");
+                const { getFirestore, collection, onSnapshot, addDoc } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
+                const app = initializeApp(JSON.parse(__firebase_config));
+                db = getFirestore(app);
+                console.log("Cloud Enabled");
             }
-        });
+        } catch (e) { console.warn("Running in Local Mode"); }
 
-        // SYNC
-        function syncData(userId) {
-            // Records
-            onSnapshot(collection(db, 'artifacts', appId, 'users', userId, 'records'), (snap) => {
-                records = snap.docs.map(doc => doc.data()).sort((a,b) => b.timestamp - a.timestamp);
-                updateUI();
-            });
-            // Stations
-            onSnapshot(collection(db, 'artifacts', appId, 'users', userId, 'stations'), (snap) => {
-                stations = snap.docs.map(doc => doc.data());
-                updateMapMarkers();
-                if(document.getElementById('search-panel').classList.contains('hidden') === false) {
-                    updateSearchResults();
-                }
-            });
-        }
-
-        // MAP & GPS
-        function initMap() {
-            map = L.map('map', { zoomControl: false, attributionControl: false }).setView(currentPos, 16);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
-            userMarker = L.marker(currentPos, { 
-                icon: L.divIcon({ className: 'user-dot', iconSize: [14, 14] }) 
-            }).addTo(map);
-        }
-
-        function startTracking() {
-            navigator.geolocation.watchPosition((pos) => {
-                const lat = pos.coords.latitude;
-                const lng = pos.coords.longitude;
-                currentPos = [lat, lng];
-                const speed = pos.coords.speed && pos.coords.speed > 0 ? Math.round(pos.coords.speed * 3.6) : 0;
-                
-                if(speed > 2) speedSamples.push(speed);
-                document.getElementById('current-speed').innerText = speed;
-                userMarker.setLatLng(currentPos);
-                if(!isFormOpen) map.panTo(currentPos);
-                updateUI();
-            }, null, { enableHighAccuracy: true });
-        }
-
-        // UI ACTIONS
+        // --- ฟังก์ชันหลักที่ผูกกับ Window เพื่อให้กดได้บนมือถือ ---
         window.toggleForm = () => {
             const panel = document.getElementById('form-panel');
             isFormOpen = !isFormOpen;
@@ -252,107 +154,78 @@
             updateSearchResults();
         };
 
-        window.closeSearchPanel = () => {
-            document.getElementById('search-panel').classList.add('hidden');
-        };
+        window.closeSearchPanel = () => document.getElementById('search-panel').classList.add('hidden');
 
         window.openGoogleMapsSearch = () => {
-            const url = `https://www.google.com/maps/search/LPG+station/@${currentPos[0]},${currentPos[1]},14z`;
-            window.open(url, '_blank');
-        };
-
-        function calculateDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371;
-            const dLat = (lat2-lat1) * Math.PI / 180;
-            const dLon = (lon2-lon1) * Math.PI / 180;
-            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
-            return (R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))).toFixed(1);
-        }
-
-        window.updateSearchResults = () => {
-            const list = document.getElementById('search-results-list');
-            const searchVal = document.getElementById('search-input').value.toLowerCase();
-            
-            const nearby = stations.map(s => ({
-                ...s,
-                dist: calculateDistance(currentPos[0], currentPos[1], s.lat, s.lng)
-            })).sort((a,b) => a.dist - b.dist);
-
-            if (nearby.length === 0) {
-                list.innerHTML = `<div class="text-center py-4 text-xs text-slate-500">ไม่พบปั๊มที่เคยบันทึกไว้</div>`;
-                return;
-            }
-
-            list.innerHTML = nearby.slice(0, 5).map(s => `
-                <div onclick="panTo(${s.lat}, ${s.lng})" class="bg-white/5 p-3 rounded-xl border border-white/5 flex justify-between items-center active:bg-white/10">
-                    <div class="flex items-center gap-3">
-                        <div class="bg-blue-600/20 p-2 rounded-lg text-blue-400"><i data-lucide="map-pin" class="w-4 h-4"></i></div>
-                        <div>
-                            <div class="text-[11px] font-bold">ปั๊ม LPG ที่บันทึก</div>
-                            <div class="text-[9px] text-slate-500 uppercase">${new Date(s.timestamp).toLocaleDateString('th-TH')}</div>
-                        </div>
-                    </div>
-                    <div class="text-xs font-black text-blue-400">${s.dist} กม.</div>
-                </div>
-            `).join('');
-            lucide.createIcons();
-        };
-
-        window.panTo = (lat, lng) => {
-            map.flyTo([lat, lng], 17);
-            closeSearchPanel();
+            window.open(`https://www.google.com/maps/search/LPG+station/@${currentPos[0]},${currentPos[1]},14z`, '_blank');
         };
 
         window.addRefillRecord = async () => {
-            const userId = auth.currentUser.uid;
             const odo = parseFloat(document.getElementById('input-odometer').value);
             const amt = parseFloat(document.getElementById('input-amount').value);
-            const liters = parseFloat(document.getElementById('input-liters').value);
             const price = parseFloat(document.getElementById('input-price-per-liter').value);
+            const liters = amt / price;
 
-            if(!odo || !amt) return alert("กรุณากรอกข้อมูล");
+            if (!odo || !amt || !price) return alert("กรุณากรอกข้อมูลให้ครบ");
 
-            await addDoc(collection(db, 'artifacts', appId, 'users', userId, 'records'), {
-                odo, amt, liters, price, timestamp: Date.now()
-            });
+            const newRecord = { odo, amt, liters, price, timestamp: Date.now() };
+            records.unshift(newRecord);
+            localStorage.setItem('lpg_records', JSON.stringify(records));
+            
+            // บันทึกตำแหน่งปั๊มอัตโนมัติ
+            const newStation = { lat: currentPos[0], lng: currentPos[1], timestamp: Date.now() };
+            stations.push(newStation);
+            localStorage.setItem('lpg_stations', JSON.stringify(stations));
 
-            await addDoc(collection(db, 'artifacts', appId, 'users', userId, 'stations'), {
-                lat: currentPos[0], lng: currentPos[1], timestamp: Date.now()
-            });
-
+            updateUI();
+            updateMapMarkers();
             toggleForm();
+            alert("บันทึกสำเร็จ!");
         };
 
-        window.saveCurrentLocationManual = async () => {
-            const userId = auth.currentUser.uid;
-            await addDoc(collection(db, 'artifacts', appId, 'users', userId, 'stations'), {
-                lat: currentPos[0], lng: currentPos[1], timestamp: Date.now()
-            });
+        window.saveCurrentLocationManual = () => {
+            const newStation = { lat: currentPos[0], lng: currentPos[1], timestamp: Date.now() };
+            stations.push(newStation);
+            localStorage.setItem('lpg_stations', JSON.stringify(stations));
+            updateMapMarkers();
             alert("บันทึกพิกัดปั๊มแล้ว");
         };
 
+        // --- ระบบแผนที่และ GPS ---
+        function initMap() {
+            map = L.map('map', { zoomControl: false, attributionControl: false }).setView(currentPos, 16);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+            userMarker = L.marker(currentPos, { icon: L.divIcon({ className: 'user-dot', iconSize: [14, 14] }) }).addTo(map);
+            updateMapMarkers();
+        }
+
         function updateMapMarkers() {
-            stations.forEach(s => {
-                L.circleMarker([s.lat, s.lng], { radius: 6, fillColor: "#3b82f6", color: "#fff", weight: 2, fillOpacity: 1 }).addTo(map);
-            });
+            stations.forEach(s => L.circleMarker([s.lat, s.lng], { radius: 6, fillColor: "#3b82f6", color: "#fff", weight: 2, fillOpacity: 1 }).addTo(map));
+        }
+
+        function startTracking() {
+            navigator.geolocation.watchPosition((pos) => {
+                currentPos = [pos.coords.latitude, pos.coords.longitude];
+                const speed = pos.coords.speed > 0 ? Math.round(pos.coords.speed * 3.6) : 0;
+                document.getElementById('current-speed').innerText = speed;
+                userMarker.setLatLng(currentPos);
+                if (!isFormOpen) map.panTo(currentPos);
+                updateUI();
+            }, null, { enableHighAccuracy: true });
         }
 
         function updateUI() {
-            if(records.length === 0) return;
+            if (records.length === 0) return;
             const latest = records[0];
             document.getElementById('gas-remain').innerText = latest.liters.toFixed(1);
 
-            if(records.length >= 2) {
+            if (records.length >= 2) {
                 const trip = latest.odo - records[1].odo;
                 const costKm = latest.amt / trip;
                 const kmL = trip / latest.liters;
                 document.getElementById('avg-cost').innerText = costKm.toFixed(2);
                 document.getElementById('trip-dist').innerText = trip;
-
-                const avgSpeed = speedSamples.length > 0 ? speedSamples.reduce((a,b)=>a+b,0)/speedSamples.length : 60;
-                let multiplier = avgSpeed > 100 ? 0.85 : (avgSpeed < 25 ? 0.75 : 1.0);
-                document.getElementById('est-range').innerText = (latest.liters * kmL * multiplier).toFixed(0);
+                document.getElementById('est-range').innerText = (latest.liters * kmL).toFixed(0);
             }
         }
 
@@ -371,6 +244,17 @@
             };
             amtInp.addEventListener('input', calc);
             priceInp.addEventListener('input', calc);
+        };
+        
+        window.updateSearchResults = () => {
+            const list = document.getElementById('search-results-list');
+            if (stations.length === 0) return;
+            list.innerHTML = stations.slice(-5).map(s => `
+                <div class="bg-white/5 p-3 rounded-xl flex justify-between items-center">
+                    <span class="text-xs">ปั๊มที่เคยบันทึก</span>
+                    <button onclick="map.flyTo([${s.lat}, ${s.lng}], 17); closeSearchPanel();" class="text-blue-400 text-xs">ดูบนแผนที่</button>
+                </div>
+            `).join('');
         };
     </script>
 </body>
