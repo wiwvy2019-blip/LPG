@@ -4,6 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>LPG Insight - Mobile Dashboard</title>
+    
+    <!-- Meta tags สำหรับทำให้เป็น Mobile App (Add to Home Screen) -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="LPG Insight">
+    <meta name="theme-color" content="#0f172a">
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/3411/3411514.png">
+
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     
@@ -144,23 +152,7 @@
         let currentPos = [13.7563, 100.5018]; // Default: Bangkok
         let isFormOpen = false;
 
-        // Firebase Fallback
-        let db = null;
-        async function initFirebase() {
-            try {
-                if (typeof __firebase_config !== 'undefined' && __firebase_config) {
-                    const { initializeApp } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js");
-                    const { getFirestore } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
-                    const app = initializeApp(JSON.parse(__firebase_config));
-                    db = getFirestore(app);
-                    console.log("Cloud Persistence Enabled");
-                }
-            } catch (e) {
-                console.warn("Firebase config not found, using Local Storage only.");
-            }
-        }
-
-        // --- Global Functions (Attached to Window for Mobile Support) ---
+        // --- Global Functions ---
         window.toggleForm = () => {
             const panel = document.getElementById('form-panel');
             isFormOpen = !isFormOpen;
@@ -197,7 +189,6 @@
             records.unshift(newRecord);
             localStorage.setItem('lpg_records', JSON.stringify(records));
             
-            // Auto Save Station Location
             const newStation = { lat: currentPos[0], lng: currentPos[1], timestamp: Date.now() };
             stations.push(newStation);
             localStorage.setItem('lpg_stations', JSON.stringify(stations));
@@ -206,7 +197,6 @@
             updateMapMarkers();
             toggleForm();
             
-            // Clear inputs
             odoInput.value = '';
             amtInput.value = '';
             
@@ -223,7 +213,6 @@
 
         // --- Core Functions ---
         function initMap() {
-            // Initialize map with a default view first to ensure visibility
             map = L.map('map', { 
                 zoomControl: false, 
                 attributionControl: false,
@@ -254,10 +243,7 @@
         }
 
         function startTracking() {
-            if (!navigator.geolocation) {
-                console.error("Geolocation is not supported by this browser.");
-                return;
-            }
+            if (!navigator.geolocation) return;
 
             navigator.geolocation.watchPosition((pos) => {
                 currentPos = [pos.coords.latitude, pos.coords.longitude];
@@ -270,7 +256,7 @@
                 
                 updateUI();
             }, (err) => {
-                console.warn("GPS Access Error: ", err.message);
+                console.warn("GPS Access Error");
             }, { enableHighAccuracy: true });
         }
 
@@ -285,7 +271,6 @@
                 return;
             }
 
-            // Update Metrics
             const latest = records[0];
             document.getElementById('gas-remain').innerText = latest.liters.toFixed(1);
 
@@ -300,7 +285,6 @@
                 document.getElementById('est-range').innerText = (latest.liters * kmL).toFixed(0);
             }
 
-            // Update History List (Show last 5)
             historyList.innerHTML = records.slice(0, 5).map(r => `
                 <div class="flex justify-between items-center bg-white/5 p-2 rounded-xl border border-white/5">
                     <div>
@@ -334,15 +318,12 @@
             lucide.createIcons();
         };
 
-        // --- Init ---
-        window.onload = async () => {
-            await initFirebase();
+        window.onload = () => {
             lucide.createIcons();
             initMap();
             startTracking();
             updateUI();
             
-            // Auto Calculation for liters in Form
             const amtInp = document.getElementById('input-amount');
             const priceInp = document.getElementById('input-price-per-liter');
             const literInp = document.getElementById('input-liters');
