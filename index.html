@@ -170,7 +170,7 @@
             </div>
         </div>
         <input type="hidden" id="edit-id-store">
-        <button id="save-button" onclick="window.addRefillRecord()" class="w-full bg-blue-600 text-white py-5 rounded-2xl font-bold shadow-xl mb-4">ตกลง</button>
+        <button id="save-button" onclick="window.addRefillRecord()" class="w-full bg-blue-600 text-white py-5 rounded-2xl font-bold shadow-xl mb-4 active:bg-blue-700 disabled:opacity-50">ตกลง</button>
         <button onclick="window.toggleForm()" class="w-full text-slate-400 font-bold py-2">ยกเลิก</button>
     </div>
 
@@ -180,10 +180,12 @@
         import { getFirestore, collection, onSnapshot, doc, addDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         let db, auth, currentUser;
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const app = initializeApp(firebaseConfig);
-        auth = getAuth(app);
-        db = getFirestore(app);
+        try {
+            const firebaseConfig = JSON.parse(__firebase_config);
+            const app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+        } catch(e) { console.warn("Firebase config error"); }
         
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'lpg-pro-cloud-v1';
 
@@ -196,33 +198,41 @@
         let isHistoryOpen = false;
         let tripDistance = parseFloat(localStorage.getItem('gps_trip_dist')) || 0;
 
-        // AUTH & SYNC (เครื่องใครเครื่องมันด้วย Anonymous Auth)
+        // AUTH & SYNC
         const initAuth = async () => {
-            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                await signInWithCustomToken(auth, __initial_auth_token);
-            } else {
-                await signInAnonymously(auth);
-            }
+            if (!auth) return;
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch(e) { console.error(e); }
         };
 
-        onAuthStateChanged(auth, (u) => {
-            currentUser = u;
-            if (currentUser) {
-                onSnapshot(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'refills'), (snap) => {
-                    const cloudRecords = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-                    records = cloudRecords.sort((a,b) => b.timestamp - a.timestamp);
-                    localStorage.setItem('lpg_records', JSON.stringify(records));
-                    window.updateUI();
-                });
-                onSnapshot(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), (snap) => {
-                    stations = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-                    localStorage.setItem('lpg_stations', JSON.stringify(stations));
-                    window.renderStations();
-                });
-            } else {
-                initAuth();
-            }
-        });
+        if (auth && db) {
+            onAuthStateChanged(auth, (u) => {
+                currentUser = u;
+                if (currentUser) {
+                    onSnapshot(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'refills'), (snap) => {
+                        const cloudRecords = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                        if (cloudRecords.length > 0) {
+                            records = cloudRecords.sort((a,b) => b.timestamp - a.timestamp);
+                            localStorage.setItem('lpg_records', JSON.stringify(records));
+                            window.updateUI();
+                        }
+                    });
+                    onSnapshot(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), (snap) => {
+                        const cloudStations = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                        stations = cloudStations;
+                        localStorage.setItem('lpg_stations', JSON.stringify(stations));
+                        window.renderStations();
+                    });
+                } else {
+                    initAuth();
+                }
+            });
+        }
 
         // --- GLOBAL FUNCTIONS ---
 
@@ -265,11 +275,13 @@
             }
             isFormOpen = !isFormOpen;
             panel.style.transform = isFormOpen ? 'translateY(0)' : 'translateY(100%)';
-            if (!isFormOpen && map) setTimeout(() => map.invalidateSize(), 300);
+            if (!isFormOpen && map) {
+                setTimeout(() => map.invalidateSize(), 300);
+            }
         };
 
+        // --- แก้ไขระบบการบันทึก: Local First ป้องกันค้าง ---
         window.addRefillRecord = async () => {
-            if (!currentUser) return alert("รอการเชื่อมต่อระบบ...");
             const odo = parseFloat(document.getElementById('input-odometer').value);
             const amt = parseFloat(document.getElementById('input-amount').value);
             const price = parseFloat(document.getElementById('input-price-per-liter').value);
@@ -278,19 +290,46 @@
 
             if (isNaN(odo) || isNaN(amt) || isNaN(price)) return alert("กรุณากรอกข้อมูลให้ครบถ้วน");
 
-            const refillData = { odo, amt, price, isFull, lat: currentPos[0], lng: currentPos[1] };
+            const refillData = { 
+                odo, amt, price, isFull, 
+                lat: currentPos[0], 
+                lng: currentPos[1],
+                timestamp: Date.now() 
+            };
 
-            try {
-                if (editId && !editId.startsWith('local-')) {
-                    await updateDoc(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'refills', editId), refillData);
-                } else {
-                    refillData.timestamp = Date.now();
-                    await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'refills'), refillData);
-                    await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), { lat: currentPos[0], lng: currentPos[1], timestamp: Date.now() });
+            // 1. บันทึก Local ก่อนทันที เพื่อความรวดเร็ว
+            if (editId) {
+                const idx = records.findIndex(r => r.id === editId);
+                if (idx !== -1) {
+                    refillData.timestamp = records[idx].timestamp; // รักษาเวลาเดิม
+                    records[idx] = { ...records[idx], ...refillData };
                 }
-                if (!editId) window.resetTrip();
-                window.toggleForm();
-            } catch (e) { alert("Error: " + e.message); }
+            } else {
+                refillData.id = 'temp-' + Date.now();
+                records.unshift(refillData);
+            }
+            
+            localStorage.setItem('lpg_records', JSON.stringify(records));
+            window.updateUI(); // อัปเดต UI ทันที
+            window.toggleForm(); // ปิดฟอร์มทันที ป้องกันหน้าจอค้าง
+
+            // 2. พยายามส่ง Cloud อยู่เบื้องหลัง
+            if (db && currentUser) {
+                try {
+                    if (editId && !editId.startsWith('temp-')) {
+                        await updateDoc(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'refills', editId), refillData);
+                    } else {
+                        const cleanData = { ...refillData };
+                        delete cleanData.id;
+                        await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'refills'), cleanData);
+                        await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), { 
+                            lat: currentPos[0], 
+                            lng: currentPos[1], 
+                            timestamp: Date.now() 
+                        });
+                    }
+                } catch (e) { console.error("Cloud Sync Failed, but data saved locally", e); }
+            }
         };
 
         window.updateUI = () => {
@@ -304,7 +343,6 @@
                 return;
             }
 
-            // Render History
             const groups = records.reduce((acc, r) => {
                 const date = new Date(r.timestamp).toLocaleDateString('th-TH', { day:'numeric', month:'short' });
                 if (!acc[date]) acc[date] = [];
@@ -330,58 +368,40 @@
                 </div>
             `).join('');
 
-            // --- ระบบวิเคราะห์ข้อมูลเฉลี่ยสะสม (Global Analysis) ---
             const latest = records[0];
             let globalAvgKmL = 0;
             let globalAvgBkm = 0;
 
             if (records.length >= 2) {
-                // คำนวณจากประวัติทั้งหมด: ระยะทางรวม / จำนวนลิตรรวม
-                // ระยะทางรวม = เลขไมล์ล่าสุด - เลขไมล์ครั้งแรกสุด
-                // จำนวนลิตรรวม = ผลรวมลิตรที่เติมครั้งต่อๆ มา (เพราะครั้งแรกคือจุดเริ่ม)
                 const firstRecord = records[records.length - 1];
                 const totalDistanceCovered = latest.odo - firstRecord.odo;
-                
-                // รวมจำนวนลิตรที่เติมทั้งหมด ยกเว้นครั้งแรกสุด (เพราะเราวัดระยะทางที่วิ่งได้หลังจากเติมครั้งแรกเป็นต้นมา)
                 let totalLitersRefilled = 0;
                 let totalCostRefilled = 0;
-                
                 for (let i = 0; i < records.length - 1; i++) {
                     totalLitersRefilled += (records[i].amt / records[i].price);
                     totalCostRefilled += records[i].amt;
                 }
-
                 if (totalDistanceCovered > 0 && totalLitersRefilled > 0) {
                     globalAvgKmL = totalDistanceCovered / totalLitersRefilled;
                     globalAvgBkm = totalCostRefilled / totalDistanceCovered;
                 }
             }
 
-            // แสดงผลตามโหมดที่เลือก
-            if (mode === 'kml') {
-                document.getElementById('consumption-val').innerText = globalAvgKmL > 0 ? globalAvgKmL.toFixed(1) : "--";
-                document.getElementById('consumption-unit').innerText = "KM/L";
-            } else {
-                document.getElementById('consumption-val').innerText = globalAvgBkm > 0 ? globalAvgBkm.toFixed(2) : "--";
-                document.getElementById('consumption-unit').innerText = "฿/KM";
-            }
-
-            // คำนวณแก๊สคงเหลือในถังปัจจุบัน (อ้างอิงจากการเติมล่าสุด)
+            document.getElementById('consumption-val').innerText = globalAvgKmL > 0 ? (mode === 'kml' ? globalAvgKmL.toFixed(1) : globalAvgBkm.toFixed(2)) : "--";
+            document.getElementById('consumption-unit').innerText = mode === 'kml' ? "KM/L" : "฿/KM";
+            
             let currentLiters = latest.isFull ? 54 : (latest.amt / latest.price);
             document.getElementById('gas-remain').innerText = currentLiters.toFixed(1);
 
-            // คาดการณ์ระยะทางที่เหลือ (Range) โดยใช้ค่าเฉลี่ยสะสม (Global KM/L)
             if (globalAvgKmL > 0) {
-                // ระยะทางที่น่าจะวิ่งได้จากแก๊สในถัง - ระยะทางที่ขับไปแล้วในทริปนี้
-                const totalEstimatedRange = currentLiters * globalAvgKmL;
-                const predictedRangeLeft = Math.max(0, totalEstimatedRange - tripDistance);
+                const predictedRangeLeft = Math.max(0, (currentLiters * globalAvgKmL) - tripDistance);
                 document.getElementById('range-left').innerText = Math.round(predictedRangeLeft);
             } else {
                 document.getElementById('range-left').innerText = "--";
             }
 
             countLabel.innerText = records.length;
-            lucide.createIcons();
+            if (window.lucide) lucide.createIcons();
         };
 
         window.exportToCSV = () => {
@@ -409,12 +429,13 @@
         };
 
         window.saveCurrentLocationManual = async () => {
-            if (!currentUser) return;
-            const newStation = { lat: currentPos[0], lng: currentPos[1], timestamp: Date.now() };
+            if (!currentUser || !db) return alert("รอเชื่อมต่อระบบคลาวด์...");
             try {
-                await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), newStation);
+                await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), { 
+                    lat: currentPos[0], lng: currentPos[1], timestamp: Date.now() 
+                });
                 alert("บันทึกพิกัดปั๊มแล้ว");
-            } catch (e) { console.error(e); }
+            } catch (e) { alert("บันทึกลงคลาวด์ไม่สำเร็จ"); }
         };
 
         window.renderStations = () => {
@@ -427,15 +448,36 @@
                     }).addTo(map);
                 }
             });
-            lucide.createIcons();
+            if (window.lucide) lucide.createIcons();
         };
 
+        // --- ระบบสร้างแผนที่แบบเน้นความเสถียร ---
         function initMap() {
             if (map) return;
-            map = L.map('map', { zoomControl: false, attributionControl: false, rotate: true }).setView(currentPos, 16);
-            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 }).addTo(map);
-            userMarker = L.marker(currentPos, { icon: L.divIcon({ className: 'car-marker', iconSize: [20, 25], iconAnchor: [10, 12] }) }).addTo(map);
-            setTimeout(() => map.invalidateSize(), 500);
+            const container = document.getElementById('map');
+            if (!container) {
+                setTimeout(initMap, 200);
+                return;
+            }
+
+            map = L.map('map', { 
+                zoomControl: false, 
+                attributionControl: false, 
+                rotate: true,
+                fadeAnimation: true
+            }).setView(currentPos, 16);
+
+            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', { 
+                maxZoom: 19 
+            }).addTo(map);
+
+            userMarker = L.marker(currentPos, { 
+                icon: L.divIcon({ className: 'car-marker', iconSize: [20, 25], iconAnchor: [10, 12] }) 
+            }).addTo(map);
+
+            // บังคับวาดใหม่ซ้ำๆ เพื่อแก้ปัญหาแผนที่สีเทา
+            map.invalidateSize();
+            [500, 1500, 3000, 5000].forEach(t => setTimeout(() => map.invalidateSize(), t));
         }
 
         function calculateDistance(lat1, lon1, lat2, lon2) {
@@ -474,14 +516,17 @@
                 if (!isFormOpen && map) {
                     map.setBearing(currentHeading);
                     const offsetPos = getOffsetCenter(latitude, longitude, currentHeading, 0.15);
-                    map.panTo(offsetPos, { animate: true });
+                    map.panTo(offsetPos, { animate: true, duration: 0.5 });
                 }
                 window.updateUI(); 
             }, (err) => { if (!map) initMap(); }, { enableHighAccuracy: true });
         }
 
         window.addEventListener('load', () => {
-            lucide.createIcons(); initMap(); startTracking();
+            if (window.lucide) lucide.createIcons();
+            initMap();
+            startTracking();
+            window.updateUI();
             const amtIn = document.getElementById('input-amount');
             const prcIn = document.getElementById('input-price-per-liter');
             const ltrOut = document.getElementById('input-liters');
