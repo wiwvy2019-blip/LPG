@@ -9,7 +9,6 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#3b82f6">
 
-    <!-- CSS ลำดับที่ 1: Tailwind และ Leaflet -->
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     
@@ -22,12 +21,11 @@
         }
         body { font-family: 'Kanit', sans-serif; color: #1e293b; }
         
-        /* บังคับขนาด Container แผนที่ให้แน่นอน */
         #map { 
             position: absolute; 
             top: 0; left: 0; right: 0; bottom: 0; 
             z-index: 1; 
-            background: #cbd5e1; /* สีเทารอโหลด */
+            background: #cbd5e1;
             height: 100% !important;
             width: 100% !important;
         }
@@ -41,17 +39,15 @@
         .pump-marker { background: #ef4444; border: 2px solid white; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; box-shadow: 0 2px 10px rgba(0,0,0,0.2); }
     </style>
 
-    <!-- JS ลำดับที่ 2: Leaflet และ Plugins -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
 </head>
 <body>
 
-    <!-- พื้นที่แผนที่ -->
     <div id="map"></div>
 
-    <!-- UI Overlay (เหมือนเดิม) -->
+    <!-- UI Overlay Top -->
     <div class="map-overlay top-0 p-4 space-y-3">
         <div class="flex gap-2">
             <div class="glass-ui interactable p-3 rounded-2xl border-l-4 border-blue-600 flex-1 shadow-md">
@@ -64,7 +60,7 @@
             <div class="glass-ui interactable p-3 rounded-2xl border-l-4 border-emerald-600 flex-1 shadow-md">
                 <div class="flex justify-between items-start">
                     <span class="text-[9px] font-bold text-emerald-600 uppercase block tracking-tighter">ความสิ้นเปลือง</span>
-                    <select id="metric-mode" onchange="updateUI()" class="text-[9px] bg-slate-100 rounded px-1 outline-none">
+                    <select id="metric-mode" onchange="window.updateUI()" class="text-[9px] bg-slate-100 rounded px-1 outline-none">
                         <option value="kml">กม./ลิตร</option>
                         <option value="bkm">บาท/กม.</option>
                     </select>
@@ -77,6 +73,7 @@
         </div>
     </div>
 
+    <!-- UI Overlay Middle -->
     <div class="map-overlay bottom-[130px] px-4 space-y-2">
         <div class="glass-ui interactable rounded-2xl p-3 shadow-lg flex justify-between items-center border-b-2 border-blue-500">
             <div class="flex-1">
@@ -84,10 +81,10 @@
                 <div class="text-xl font-black text-blue-700" id="gps-trip-dist">0.00</div>
             </div>
             <div class="flex gap-2">
-                <button onclick="resetTrip()" class="bg-blue-50 p-2 rounded-xl text-blue-600 active:bg-blue-100 border border-blue-100">
+                <button onclick="window.resetTrip()" class="bg-blue-50 p-2 rounded-xl text-blue-600 active:bg-blue-100 border border-blue-100">
                     <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
                 </button>
-                <button onclick="exportToCSV()" class="bg-slate-100 p-2 rounded-xl text-slate-600 border border-slate-200">
+                <button onclick="window.exportToCSV()" class="bg-slate-100 p-2 rounded-xl text-slate-600 border border-slate-200">
                     <i data-lucide="download" class="w-4 h-4"></i>
                 </button>
             </div>
@@ -101,8 +98,9 @@
         </div>
     </div>
 
+    <!-- UI Overlay Bottom -->
     <div class="map-overlay bottom-0 p-6 flex justify-between items-center safe-bottom">
-        <button onclick="saveCurrentLocationManual()" class="interactable bg-white text-blue-600 p-4 rounded-full shadow-2xl border border-blue-50">
+        <button onclick="window.saveCurrentLocationManual()" class="interactable bg-white text-blue-600 p-4 rounded-full shadow-2xl border border-blue-50">
             <i data-lucide="map-pin" class="w-6 h-6"></i>
         </button>
         <div class="glass-ui p-2 rounded-3xl flex gap-2 items-center shadow-2xl interactable border border-blue-100">
@@ -110,7 +108,7 @@
                 <div class="text-[8px] text-slate-400 font-bold uppercase">แก๊สในถัง</div>
                 <div class="text-sm font-bold text-blue-600" id="gas-remain">0.0</div>
             </div>
-            <button onclick="toggleForm()" class="bg-emerald-600 text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-2 shadow-lg">
+            <button onclick="window.toggleForm()" class="bg-emerald-600 text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-2 shadow-lg">
                 <i data-lucide="plus" class="w-5 h-5"></i> บันทึกเติม
             </button>
         </div>
@@ -118,7 +116,7 @@
 
     <!-- Form Panel -->
     <div id="form-panel" class="fixed inset-x-0 bottom-0 z-[2001] bg-white translate-y-full transition-transform duration-500 rounded-t-[3rem] p-8 border-t border-slate-200 shadow-2xl interactable safe-bottom">
-        <div class="w-12 h-1 bg-slate-200 rounded-full mx-auto mb-6" onclick="toggleForm()"></div>
+        <div class="w-12 h-1 bg-slate-200 rounded-full mx-auto mb-6" onclick="window.toggleForm()"></div>
         <div class="flex justify-between items-center mb-6">
             <h3 class="text-xl font-bold text-slate-800 flex items-center gap-2">
                 <i data-lucide="fuel" class="text-orange-500"></i> <span id="form-title">บันทึกการเติมแก๊ส</span>
@@ -129,16 +127,28 @@
             </label>
         </div>
         <div class="grid grid-cols-2 gap-4 mb-4">
-            <input type="number" id="input-odometer" class="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-slate-800 font-bold" placeholder="เลขไมล์">
-            <input type="number" step="0.01" id="input-price-per-liter" class="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-slate-800 font-bold" placeholder="ราคา/ลิตร">
+            <div class="space-y-1">
+                <label class="text-[9px] font-bold text-slate-400 uppercase">เลขไมล์</label>
+                <input type="number" id="input-odometer" class="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-slate-800 font-bold" placeholder="0">
+            </div>
+            <div class="space-y-1">
+                <label class="text-[9px] font-bold text-slate-400 uppercase">ราคาต่อลิตร</label>
+                <input type="number" step="0.01" id="input-price-per-liter" class="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-slate-800 font-bold" placeholder="0.00">
+            </div>
         </div>
         <div class="grid grid-cols-2 gap-4 mb-8">
-            <input type="number" id="input-amount" class="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-slate-800 font-bold" placeholder="จำนวนเงิน">
-            <input type="number" id="input-liters" class="w-full bg-slate-100 border-0 rounded-2xl p-4 text-slate-500 font-bold" readonly placeholder="ลิตร">
+            <div class="space-y-1">
+                <label class="text-[9px] font-bold text-slate-400 uppercase">จำนวนเงิน (บาท)</label>
+                <input type="number" id="input-amount" class="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-slate-800 font-bold" placeholder="0">
+            </div>
+            <div class="space-y-1 opacity-60">
+                <label class="text-[9px] font-bold text-slate-400 uppercase">จำนวนลิตร</label>
+                <input type="number" id="input-liters" class="w-full bg-slate-100 border-0 rounded-2xl p-4 text-slate-500 font-bold" readonly placeholder="0.00">
+            </div>
         </div>
         <input type="hidden" id="edit-id-store">
-        <button onclick="addRefillRecord()" class="w-full bg-blue-600 text-white py-5 rounded-2xl font-bold shadow-xl mb-4">ตกลง</button>
-        <button onclick="toggleForm()" class="w-full text-slate-400 font-bold">ยกเลิก</button>
+        <button id="save-button" onclick="window.addRefillRecord()" class="w-full bg-blue-600 text-white py-5 rounded-2xl font-bold shadow-xl mb-4">ตกลง</button>
+        <button onclick="window.toggleForm()" class="w-full text-slate-400 font-bold">ยกเลิก</button>
     </div>
 
     <script type="module">
@@ -146,58 +156,253 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, onSnapshot, doc, addDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Firebase Config Guard
-        let db, auth, user;
+        // Firebase Config Safety
+        let db, auth, currentUser;
         try {
-            const firebaseConfig = JSON.parse(__firebase_config);
-            const app = initializeApp(firebaseConfig);
-            auth = getAuth(app);
-            db = getFirestore(app);
-        } catch(e) { console.warn("Cloud not connected"); }
+            if (typeof __firebase_config !== 'undefined') {
+                const firebaseConfig = JSON.parse(__firebase_config);
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+            }
+        } catch(e) { console.warn("Cloud connection not configured yet."); }
         
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'lpg-pro-cloud';
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'lpg-pro-cloud-v1';
 
-        let records = [];
-        let stations = [];
+        // Local Storage State
+        let records = JSON.parse(localStorage.getItem('lpg_records') || '[]');
+        let stations = JSON.parse(localStorage.getItem('lpg_stations') || '[]');
         let map, userMarker, tripPoints = [];
         let currentPos = [13.7563, 100.5018];
         let currentHeading = 0;
         let isFormOpen = false;
         let tripDistance = parseFloat(localStorage.getItem('gps_trip_dist')) || 0;
 
-        // Firebase Sync
+        // Firebase Auth & Sync
         if (auth && db) {
             onAuthStateChanged(auth, (u) => {
-                user = u;
-                if (user) {
-                    onSnapshot(collection(db, 'artifacts', appId, 'users', user.uid, 'refills'), (snap) => {
-                        records = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => b.timestamp - a.timestamp);
-                        updateUI();
-                    });
-                    onSnapshot(collection(db, 'artifacts', appId, 'users', user.uid, 'stations'), (snap) => {
+                currentUser = u;
+                if (currentUser) {
+                    onSnapshot(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'refills'), (snap) => {
+                        const cloudRecords = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                        if (cloudRecords.length > 0) {
+                            records = cloudRecords.sort((a,b) => b.timestamp - a.timestamp);
+                            localStorage.setItem('lpg_records', JSON.stringify(records));
+                            window.updateUI();
+                        }
+                    }, (err) => console.error("Cloud Sync Error:", err));
+
+                    onSnapshot(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), (snap) => {
                         stations = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-                        renderStations();
-                    });
+                        localStorage.setItem('lpg_stations', JSON.stringify(stations));
+                        window.renderStations();
+                    }, (err) => console.error("Station Sync Error:", err));
                 } else {
-                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                        signInWithCustomToken(auth, __initial_auth_token);
-                    } else {
-                        signInAnonymously(auth);
-                    }
+                    const initAuth = async () => {
+                        try {
+                            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                                await signInWithCustomToken(auth, __initial_auth_token);
+                            } else {
+                                await signInAnonymously(auth);
+                            }
+                        } catch(e) { console.error("Auth Error:", e); }
+                    };
+                    initAuth();
                 }
             });
         }
 
-        // ฟังก์ชันหลักสำหรับการเริ่มแผนที่
-        function initMap() {
-            if (map) return;
-            const mapEl = document.getElementById('map');
-            if (!mapEl || typeof L === 'undefined') {
-                setTimeout(initMap, 200);
+        // --- GLOBAL FUNCTIONS ---
+        
+        window.toggleForm = (editId = null) => {
+            const panel = document.getElementById('form-panel');
+            const submitBtn = document.getElementById('save-button');
+            
+            if (editId && typeof editId === 'string') {
+                const r = records.find(x => x.id === editId);
+                if (r) {
+                    document.getElementById('form-title').innerText = "แก้ไขข้อมูล";
+                    submitBtn.innerText = "ยืนยันการแก้ไข";
+                    document.getElementById('edit-id-store').value = editId;
+                    document.getElementById('input-odometer').value = r.odo;
+                    document.getElementById('input-amount').value = r.amt;
+                    document.getElementById('input-price-per-liter').value = r.price;
+                    document.getElementById('input-is-full').checked = r.isFull;
+                    document.getElementById('input-liters').value = (r.amt / r.price).toFixed(2);
+                }
+            } else if (!isFormOpen) {
+                document.getElementById('form-title').innerText = "บันทึกการเติมแก๊ส";
+                submitBtn.innerText = "ตกลง";
+                document.getElementById('edit-id-store').value = "";
+                document.getElementById('input-odometer').value = "";
+                document.getElementById('input-amount').value = "";
+                document.getElementById('input-price-per-liter').value = records[0]?.price || "15.50";
+                document.getElementById('input-is-full').checked = false;
+                document.getElementById('input-liters').value = "";
+            }
+            
+            isFormOpen = !isFormOpen;
+            panel.style.transform = isFormOpen ? 'translateY(0)' : 'translateY(100%)';
+            if (!isFormOpen && map) setTimeout(() => map.invalidateSize(), 300);
+        };
+
+        window.addRefillRecord = async () => {
+            const odoInput = document.getElementById('input-odometer');
+            const amtInput = document.getElementById('input-amount');
+            const priceInput = document.getElementById('input-price-per-liter');
+            const isFull = document.getElementById('input-is-full').checked;
+            const editId = document.getElementById('edit-id-store').value;
+
+            const odo = parseFloat(odoInput.value);
+            const amt = parseFloat(amtInput.value);
+            const price = parseFloat(priceInput.value);
+
+            if (!odo || !amt || !price) return alert("กรุณากรอกข้อมูลให้ครบถ้วน");
+
+            const refillData = {
+                odo, amt, price, isFull,
+                timestamp: Date.now(),
+                lat: currentPos[0],
+                lng: currentPos[1]
+            };
+
+            // Hybrid: บันทึก Local ก่อน
+            if (editId) {
+                const idx = records.findIndex(r => r.id === editId);
+                if (idx !== -1) {
+                    refillData.timestamp = records[idx].timestamp; // รักษาเวลาเดิม
+                    records[idx] = { ...records[idx], ...refillData };
+                }
+            } else {
+                records.unshift({ id: 'local-' + Date.now(), ...refillData });
+            }
+            localStorage.setItem('lpg_records', JSON.stringify(records));
+
+            // พยายามซิงค์ Cloud
+            if (db && currentUser) {
+                try {
+                    if (editId && !editId.startsWith('local-')) {
+                        await updateDoc(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'refills', editId), refillData);
+                    } else {
+                        await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'refills'), refillData);
+                        await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), { lat: currentPos[0], lng: currentPos[1], timestamp: Date.now() });
+                    }
+                } catch (e) { console.error("Cloud Sync Failed:", e); }
+            }
+
+            window.updateUI();
+            window.toggleForm();
+        };
+
+        window.updateUI = () => {
+            const container = document.getElementById('history-container');
+            const countLabel = document.getElementById('record-count');
+            
+            if (records.length === 0) {
+                container.innerHTML = '<div class="text-[10px] text-slate-400 text-center py-4">ไม่มีประวัติการเติม</div>';
+                countLabel.innerText = "0 รายการ";
                 return;
             }
 
-            // สร้างแผนที่
+            const groups = records.reduce((acc, r) => {
+                const date = new Date(r.timestamp).toLocaleDateString('th-TH', { day:'numeric', month:'short' });
+                if (!acc[date]) acc[date] = [];
+                acc[date].push(r);
+                return acc;
+            }, {});
+
+            container.innerHTML = Object.entries(groups).map(([date, items]) => `
+                <div class="space-y-1">
+                    <div class="text-[8px] font-bold text-slate-400 uppercase pl-1">${date}</div>
+                    ${items.map(r => `
+                        <div onclick="window.toggleForm('${r.id}')" class="bg-white p-3 rounded-xl border border-slate-100 flex justify-between items-center shadow-sm active:bg-blue-50 transition-all cursor-pointer">
+                            <div class="flex-1">
+                                <div class="text-[11px] font-bold text-slate-800">${r.odo.toLocaleString()} กม.</div>
+                                <div class="text-[8px] text-slate-400 font-medium">
+                                    ${r.isFull ? '<span class="text-emerald-600 font-bold">เต็มถัง</span>' : 'เติมเพิ่ม'} • ${new Date(r.timestamp).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})}
+                                </div>
+                            </div>
+                            <div class="text-right flex items-center gap-3">
+                                <div>
+                                    <div class="text-[11px] font-bold text-blue-600">${r.amt} ฿</div>
+                                    <div class="text-[8px] text-slate-400 font-bold">${(r.amt/r.price).toFixed(2)} ลิตร</div>
+                                </div>
+                                <i data-lucide="edit-3" class="w-3.5 h-3.5 text-slate-300"></i>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `).join('');
+
+            const latest = records[0];
+            document.getElementById('gas-remain').innerText = latest.isFull ? "54.0" : (latest.amt / latest.price).toFixed(1);
+            
+            if (records.length >= 2) {
+                const trip = latest.odo - records[1].odo;
+                const kmL = trip / (latest.amt / latest.price);
+                const bkm = latest.amt / trip;
+                const mode = document.getElementById('metric-mode').value;
+                
+                document.getElementById('consumption-val').innerText = mode === 'kml' ? kmL.toFixed(1) : bkm.toFixed(2);
+                document.getElementById('consumption-unit').innerText = mode === 'kml' ? "KM/L" : "฿/KM";
+            }
+            
+            countLabel.innerText = `${records.length} รายการ`;
+            lucide.createIcons();
+        };
+
+        window.exportToCSV = () => {
+            if (records.length === 0) return alert("ไม่มีข้อมูลให้ส่งออก");
+            let csv = "วันที่,เวลา,เลขไมล์,จำนวนเงิน,ราคาต่อลิตร,จำนวนลิตร,เต็มถัง\n";
+            records.forEach(r => {
+                const date = new Date(r.timestamp);
+                csv += `${date.toLocaleDateString()},${date.toLocaleTimeString()},${r.odo},${r.amt},${r.price},${(r.amt/r.price).toFixed(2)},${r.isFull?'ใช่':'ไม่'}\n`;
+            });
+            const blob = new Blob(["\ufeff" + csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.setAttribute("download", `lpg_history_${new Date().toLocaleDateString()}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        };
+
+        window.resetTrip = () => { 
+            tripDistance = 0; 
+            localStorage.setItem('gps_trip_dist', 0); 
+            document.getElementById('gps-trip-dist').innerText = "0.00"; 
+            tripPoints = [];
+        };
+
+        window.saveCurrentLocationManual = async () => {
+            const newStation = { lat: currentPos[0], lng: currentPos[1], timestamp: Date.now() };
+            stations.push(newStation);
+            localStorage.setItem('lpg_stations', JSON.stringify(stations));
+            
+            if (db && currentUser) {
+                try {
+                    await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), newStation);
+                } catch (e) {}
+            }
+            window.renderStations();
+            alert("บันทึกพิกัดปั๊มแล้ว");
+        };
+
+        window.renderStations = () => {
+            if (!map) return;
+            map.eachLayer(l => { if (l instanceof L.Marker && l !== userMarker) map.removeLayer(l); });
+            stations.forEach(s => {
+                L.marker([s.lat, s.lng], { 
+                    icon: L.divIcon({ className: 'pump-marker', html: '<i data-lucide="fuel" class="w-3 h-3"></i>', iconSize: [24, 24] }) 
+                }).addTo(map);
+            });
+            lucide.createIcons();
+        };
+
+        // --- MAP & TRACKING ---
+        
+        function initMap() {
+            if (map) return;
             map = L.map('map', { 
                 zoomControl: false, 
                 attributionControl: false, 
@@ -212,9 +417,13 @@
                 icon: L.divIcon({ className: 'car-marker', iconSize: [20, 25], iconAnchor: [10, 12] }) 
             }).addTo(map);
 
-            // บังคับให้แผนที่วาดขนาดใหม่ทันทีหลังจากโหลดเสร็จ
-            setTimeout(() => { map.invalidateSize(); }, 500);
-            setTimeout(() => { map.invalidateSize(); }, 2000);
+            setTimeout(() => map.invalidateSize(), 500);
+        }
+
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; const dLat = (lat2-lat1)*Math.PI/180; const dLon = (lon2-lon1)*Math.PI/180;
+            const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
         }
 
         function getOffsetCenter(lat, lng, heading, distanceKm) {
@@ -229,6 +438,7 @@
             if (!navigator.geolocation) return;
             navigator.geolocation.watchPosition((pos) => {
                 const { latitude, longitude, speed, heading } = pos.coords;
+                
                 if (tripPoints.length > 0) {
                     const last = tripPoints[tripPoints.length - 1];
                     const d = calculateDistance(last[0], last[1], latitude, longitude);
@@ -244,6 +454,7 @@
                 document.getElementById('current-speed').innerText = speed > 0 ? Math.round(speed * 3.6) : 0;
                 if (heading !== null) currentHeading = heading;
                 currentPos = [latitude, longitude];
+                
                 if (userMarker) userMarker.setLatLng(currentPos);
                 
                 if (!isFormOpen && map) {
@@ -251,103 +462,29 @@
                     const offsetPos = getOffsetCenter(latitude, longitude, currentHeading, 0.15);
                     map.panTo(offsetPos, { animate: true });
                 }
-                updateUI();
             }, (err) => console.warn(err), { enableHighAccuracy: true });
         }
 
-        function calculateDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371; const dLat = (lat2-lat1)*Math.PI/180; const dLon = (lon2-lon1)*Math.PI/180;
-            const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
-            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-        }
-
-        window.renderStations = () => {
-            if (!map) return;
-            map.eachLayer(l => { if (l instanceof L.Marker && l !== userMarker) map.removeLayer(l); });
-            stations.forEach(s => L.marker([s.lat, s.lng], { icon: L.divIcon({ className: 'pump-marker', html: '<i data-lucide="fuel" class="w-3 h-3"></i>', iconSize: [24, 24] }) }).addTo(map));
-            lucide.createIcons();
-        };
-
-        window.updateUI = () => {
-            const container = document.getElementById('history-container');
-            if (records.length === 0) {
-                container.innerHTML = '<div class="text-[10px] text-slate-400 text-center py-4">ไม่มีประวัติ</div>';
-                return;
-            }
-            const groups = records.reduce((acc, r) => {
-                const date = new Date(r.timestamp).toLocaleDateString('th-TH', { day:'numeric', month:'short' });
-                if (!acc[date]) acc[date] = [];
-                acc[date].push(r);
-                return acc;
-            }, {});
-
-            container.innerHTML = Object.entries(groups).map(([date, items]) => `
-                <div class="space-y-1">
-                    <div class="text-[8px] font-bold text-slate-400 uppercase pl-1">${date}</div>
-                    ${items.map(r => `
-                        <div onclick="window.toggleForm('${r.id}')" class="bg-white p-3 rounded-xl border border-slate-100 flex justify-between items-center shadow-sm active:bg-blue-50 transition-colors">
-                            <div class="flex-1">
-                                <div class="text-[11px] font-bold">${r.odo.toLocaleString()} กม.</div>
-                                <div class="text-[8px] text-slate-400">${r.isFull?'เต็มถัง':'เติมเพิ่ม'} • ${new Date(r.timestamp).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})}</div>
-                            </div>
-                            <div class="text-right flex items-center gap-3">
-                                <div><div class="text-[11px] font-bold text-blue-600">${r.amt} ฿</div><div class="text-[8px] text-slate-400">${(r.amt/r.price).toFixed(2)} ลิตร</div></div>
-                                <i data-lucide="edit-3" class="w-3.5 h-3.5 text-slate-300"></i>
-                            </div>
-                        </div>
-                    `).join('')}
-                </div>
-            `).join('');
-
-            const latest = records[0];
-            document.getElementById('gas-remain').innerText = latest.isFull ? "54.0" : (latest.amt / latest.price).toFixed(1);
-            if (records.length >= 2) {
-                const trip = latest.odo - records[1].odo;
-                const kmL = trip / (latest.amt / latest.price);
-                document.getElementById('consumption-val').innerText = document.getElementById('metric-mode').value === 'kml' ? kmL.toFixed(1) : (latest.amt/trip).toFixed(2);
-            }
-            document.getElementById('record-count').innerText = `${records.length} รายการ`;
-            lucide.createIcons();
-        };
-
-        window.resetTrip = () => { tripDistance = 0; localStorage.setItem('gps_trip_dist', 0); document.getElementById('gps-trip-dist').innerText = "0.00"; };
-        window.saveCurrentLocationManual = async () => { if(!user) return; await addDoc(collection(db,'artifacts',appId,'users',user.uid,'stations'),{lat:currentPos[0],lng:currentPos[1],timestamp:Date.now()}); alert("บันทึกพิกัดแล้ว"); };
-        window.toggleForm = (editId) => { /* เหมือนเดิม */ toggleForm(editId); };
-
+        // Window Init
         window.addEventListener('load', () => {
             lucide.createIcons();
             initMap();
             startTracking();
-            const amt = document.getElementById('input-amount'); const prc = document.getElementById('input-price-per-liter');
-            const calc = () => document.getElementById('input-liters').value = (amt.value && prc.value) ? (amt.value/prc.value).toFixed(2) : '0.00';
-            amt.addEventListener('input', calc); prc.addEventListener('input', calc);
+            window.updateUI();
+            
+            const amtIn = document.getElementById('input-amount');
+            const prcIn = document.getElementById('input-price-per-liter');
+            const ltrOut = document.getElementById('input-liters');
+            
+            const calc = () => {
+                const a = parseFloat(amtIn.value);
+                const p = parseFloat(prcIn.value);
+                ltrOut.value = (a && p) ? (a / p).toFixed(2) : '0.00';
+            };
+            amtIn.addEventListener('input', calc);
+            prcIn.addEventListener('input', calc);
         });
-        
-        // ฟังก์ชัน Toggle Form แบบครบถ้วน
-        function toggleForm(editId = null) {
-            const panel = document.getElementById('form-panel');
-            if (editId && typeof editId === 'string') {
-                const r = records.find(x => x.id === editId);
-                document.getElementById('form-title').innerText = "แก้ไขข้อมูล";
-                document.getElementById('edit-id-store').value = editId;
-                document.getElementById('input-odometer').value = r.odo;
-                document.getElementById('input-amount').value = r.amt;
-                document.getElementById('input-price-per-liter').value = r.price;
-                document.getElementById('input-is-full').checked = r.isFull;
-                document.getElementById('input-liters').value = (r.amt / r.price).toFixed(2);
-            } else if (!isFormOpen) {
-                document.getElementById('form-title').innerText = "บันทึกการเติมแก๊ส";
-                document.getElementById('edit-id-store').value = "";
-                document.getElementById('input-odometer').value = "";
-                document.getElementById('input-amount').value = "";
-                document.getElementById('input-price-per-liter').value = records[0]?.price || "15.50";
-                document.getElementById('input-is-full').checked = false;
-            }
-            isFormOpen = !isFormOpen;
-            panel.style.transform = isFormOpen ? 'translateY(0)' : 'translateY(100%)';
-            if (!isFormOpen && map) setTimeout(() => map.invalidateSize(), 300);
-        }
-        window.toggleForm = toggleForm;
+
     </script>
 </body>
 </html>
