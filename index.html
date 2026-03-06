@@ -55,7 +55,7 @@
 
     <div id="map"></div>
 
-    <!-- ส่วนบน: Dashboard สถิติ -->
+    <!-- ส่วนบน: Dashboard สถิติเฉลี่ยสะสม -->
     <div class="map-overlay top-0 left-0 right-0 safe-top px-4">
         <div class="flex gap-2 mb-2">
             <div class="glass-ui interactable p-2.5 rounded-xl border-l-4 border-blue-600 flex-1 shadow-md">
@@ -67,7 +67,7 @@
             </div>
             <div class="glass-ui interactable p-2.5 rounded-xl border-l-4 border-emerald-600 flex-1 shadow-md">
                 <div class="flex justify-between items-start">
-                    <span class="text-[8px] font-bold text-emerald-600 uppercase block tracking-tighter">การสิ้นเปลือง</span>
+                    <span class="text-[8px] font-bold text-emerald-600 uppercase block tracking-tighter">ค่าเฉลี่ยสะสม</span>
                     <select id="metric-mode" onchange="window.updateUI()" class="text-[8px] bg-slate-100 rounded px-1 outline-none">
                         <option value="kml">กม./ลิตร</option>
                         <option value="bkm">บาท/กม.</option>
@@ -78,10 +78,6 @@
                     <span class="text-[8px] text-slate-400 uppercase font-bold" id="consumption-unit">KM/L</span>
                 </div>
             </div>
-        </div>
-        <div class="glass-ui p-1 px-3 rounded-full inline-block shadow-sm">
-            <span class="text-[7px] font-bold text-slate-400 uppercase mr-1">Cloud ID:</span>
-            <span id="user-id-display" class="text-[7px] font-mono text-blue-500">Connecting...</span>
         </div>
     </div>
 
@@ -97,7 +93,7 @@
                     </div>
                 </div>
                 <div class="border-l border-slate-200 pl-4">
-                    <span class="text-[8px] font-bold text-orange-500 uppercase tracking-widest block">ไปได้อีกประมาณ</span>
+                    <span class="text-[8px] font-bold text-orange-500 uppercase tracking-widest block">คาดการณ์วิ่งได้อีก</span>
                     <div class="flex items-baseline gap-1">
                         <span class="text-lg font-black text-slate-800" id="range-left">--</span>
                         <span class="text-[9px] text-slate-400 font-bold uppercase">km</span>
@@ -155,7 +151,7 @@
         </div>
         <div class="grid grid-cols-2 gap-4 mb-4">
             <div class="space-y-1">
-                <label class="text-[9px] font-bold text-slate-400 uppercase">เลขไมล์</label>
+                <label class="text-[9px] font-bold text-slate-400 uppercase">เลขไมล์ล่าสุด</label>
                 <input type="number" id="input-odometer" class="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-slate-800 font-bold outline-none" placeholder="0">
             </div>
             <div class="space-y-1">
@@ -200,7 +196,7 @@
         let isHistoryOpen = false;
         let tripDistance = parseFloat(localStorage.getItem('gps_trip_dist')) || 0;
 
-        // AUTH & SYNC
+        // AUTH & SYNC (เครื่องใครเครื่องมันด้วย Anonymous Auth)
         const initAuth = async () => {
             if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                 await signInWithCustomToken(auth, __initial_auth_token);
@@ -212,7 +208,6 @@
         onAuthStateChanged(auth, (u) => {
             currentUser = u;
             if (currentUser) {
-                document.getElementById('user-id-display').innerText = currentUser.uid;
                 onSnapshot(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'refills'), (snap) => {
                     const cloudRecords = snap.docs.map(d => ({ id: d.id, ...d.data() }));
                     records = cloudRecords.sort((a,b) => b.timestamp - a.timestamp);
@@ -274,7 +269,7 @@
         };
 
         window.addRefillRecord = async () => {
-            if (!currentUser) return alert("รอการเชื่อมต่อ Cloud ID...");
+            if (!currentUser) return alert("รอการเชื่อมต่อระบบ...");
             const odo = parseFloat(document.getElementById('input-odometer').value);
             const amt = parseFloat(document.getElementById('input-amount').value);
             const price = parseFloat(document.getElementById('input-price-per-liter').value);
@@ -293,7 +288,6 @@
                     await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'refills'), refillData);
                     await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), { lat: currentPos[0], lng: currentPos[1], timestamp: Date.now() });
                 }
-                // เมื่อเติมเสร็จ ให้รีเซ็ตทริป GPS เพื่อเริ่มคำนวณ Range ใหม่
                 if (!editId) window.resetTrip();
                 window.toggleForm();
             } catch (e) { alert("Error: " + e.message); }
@@ -336,39 +330,52 @@
                 </div>
             `).join('');
 
-            // --- คำนวณความสิ้นเปลือง และ Range ---
+            // --- ระบบวิเคราะห์ข้อมูลเฉลี่ยสะสม (Global Analysis) ---
             const latest = records[0];
-            let avgKmL = 0;
-            let avgBkm = 0;
+            let globalAvgKmL = 0;
+            let globalAvgBkm = 0;
 
             if (records.length >= 2) {
-                const prev = records[1];
-                const tripSinceLast = latest.odo - prev.odo;
-                const fuelUsed = latest.amt / latest.price; // ลิตรที่เติมเพื่อทดแทนที่ใช้ไป
-                avgKmL = tripSinceLast / fuelUsed;
-                avgBkm = latest.amt / tripSinceLast;
+                // คำนวณจากประวัติทั้งหมด: ระยะทางรวม / จำนวนลิตรรวม
+                // ระยะทางรวม = เลขไมล์ล่าสุด - เลขไมล์ครั้งแรกสุด
+                // จำนวนลิตรรวม = ผลรวมลิตรที่เติมครั้งต่อๆ มา (เพราะครั้งแรกคือจุดเริ่ม)
+                const firstRecord = records[records.length - 1];
+                const totalDistanceCovered = latest.odo - firstRecord.odo;
+                
+                // รวมจำนวนลิตรที่เติมทั้งหมด ยกเว้นครั้งแรกสุด (เพราะเราวัดระยะทางที่วิ่งได้หลังจากเติมครั้งแรกเป็นต้นมา)
+                let totalLitersRefilled = 0;
+                let totalCostRefilled = 0;
+                
+                for (let i = 0; i < records.length - 1; i++) {
+                    totalLitersRefilled += (records[i].amt / records[i].price);
+                    totalCostRefilled += records[i].amt;
+                }
+
+                if (totalDistanceCovered > 0 && totalLitersRefilled > 0) {
+                    globalAvgKmL = totalDistanceCovered / totalLitersRefilled;
+                    globalAvgBkm = totalCostRefilled / totalDistanceCovered;
+                }
             }
 
-            // แสดงผลความสิ้นเปลืองตามโหมดที่เลือก
+            // แสดงผลตามโหมดที่เลือก
             if (mode === 'kml') {
-                document.getElementById('consumption-val').innerText = avgKmL > 0 ? avgKmL.toFixed(1) : "--";
+                document.getElementById('consumption-val').innerText = globalAvgKmL > 0 ? globalAvgKmL.toFixed(1) : "--";
                 document.getElementById('consumption-unit').innerText = "KM/L";
             } else {
-                document.getElementById('consumption-val').innerText = avgBkm > 0 ? avgBkm.toFixed(2) : "--";
+                document.getElementById('consumption-val').innerText = globalAvgBkm > 0 ? globalAvgBkm.toFixed(2) : "--";
                 document.getElementById('consumption-unit').innerText = "฿/KM";
             }
 
-            // คำนวณปริมาณแก๊สในถังปัจจุบัน (ประมาณการ)
-            // สมมติถัง 54 ลิตร ถ้าเติมเต็มถังล่าสุด = 54, ถ้าไม่เต็ม = ปริมาณที่เติม
+            // คำนวณแก๊สคงเหลือในถังปัจจุบัน (อ้างอิงจากการเติมล่าสุด)
             let currentLiters = latest.isFull ? 54 : (latest.amt / latest.price);
             document.getElementById('gas-remain').innerText = currentLiters.toFixed(1);
 
-            // คำนวณ Range (ระยะทางคาดการณ์)
-            // Range = (ปริมาณแก๊สตั้งต้น * อัตราประหยัด) - ระยะทางที่ขับไปแล้วในทริปนี้
-            if (avgKmL > 0) {
-                const initialRange = currentLiters * avgKmL;
-                const predictedRange = Math.max(0, initialRange - tripDistance);
-                document.getElementById('range-left').innerText = Math.round(predictedRange);
+            // คาดการณ์ระยะทางที่เหลือ (Range) โดยใช้ค่าเฉลี่ยสะสม (Global KM/L)
+            if (globalAvgKmL > 0) {
+                // ระยะทางที่น่าจะวิ่งได้จากแก๊สในถัง - ระยะทางที่ขับไปแล้วในทริปนี้
+                const totalEstimatedRange = currentLiters * globalAvgKmL;
+                const predictedRangeLeft = Math.max(0, totalEstimatedRange - tripDistance);
+                document.getElementById('range-left').innerText = Math.round(predictedRangeLeft);
             } else {
                 document.getElementById('range-left').innerText = "--";
             }
@@ -469,7 +476,7 @@
                     const offsetPos = getOffsetCenter(latitude, longitude, currentHeading, 0.15);
                     map.panTo(offsetPos, { animate: true });
                 }
-                window.updateUI(); // อัปเดต UI ตลอดเวลาเพื่อให้ Range ลดลงตามทริป
+                window.updateUI(); 
             }, (err) => { if (!map) initMap(); }, { enableHighAccuracy: true });
         }
 
