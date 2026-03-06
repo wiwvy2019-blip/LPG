@@ -121,15 +121,27 @@
             </label>
         </div>
         <div class="grid grid-cols-2 gap-4 mb-4">
-            <input type="number" id="input-odometer" class="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-slate-800 font-bold" placeholder="เลขไมล์">
-            <input type="number" step="0.01" id="input-price-per-liter" class="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-slate-800 font-bold" placeholder="ราคา/ลิตร">
+            <div class="space-y-1">
+                <label class="text-[9px] font-bold text-slate-400 uppercase pl-1">เลขไมล์</label>
+                <input type="number" id="input-odometer" class="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-slate-800 font-bold" placeholder="0">
+            </div>
+            <div class="space-y-1">
+                <label class="text-[9px] font-bold text-slate-400 uppercase pl-1">ราคา/ลิตร</label>
+                <input type="number" step="0.01" id="input-price-per-liter" class="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-slate-800 font-bold" placeholder="0.00">
+            </div>
         </div>
         <div class="grid grid-cols-2 gap-4 mb-8">
-            <input type="number" id="input-amount" class="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-slate-800 font-bold" placeholder="จำนวนเงิน">
-            <input type="number" id="input-liters" class="w-full bg-slate-100 border-0 rounded-2xl p-4 text-slate-500 font-bold" readonly placeholder="ลิตร">
+            <div class="space-y-1">
+                <label class="text-[9px] font-bold text-slate-400 uppercase pl-1">จำนวนเงิน</label>
+                <input type="number" id="input-amount" class="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-slate-800 font-bold" placeholder="0">
+            </div>
+            <div class="space-y-1 opacity-60">
+                <label class="text-[9px] font-bold text-slate-400 uppercase pl-1">จำนวนลิตร</label>
+                <input type="number" id="input-liters" class="w-full bg-slate-100 border-0 rounded-2xl p-4 text-slate-500 font-bold" readonly placeholder="0.00">
+            </div>
         </div>
         <input type="hidden" id="edit-id-store">
-        <button onclick="addRefillRecord()" class="w-full bg-blue-600 text-white py-5 rounded-2xl font-bold shadow-xl mb-4">บันทึกลงคลาวด์</button>
+        <button id="submit-btn" onclick="addRefillRecord()" class="w-full bg-blue-600 text-white py-5 rounded-2xl font-bold shadow-xl mb-4">บันทึกลงคลาวด์</button>
         <button onclick="toggleForm()" class="w-full text-slate-400 font-bold">ยกเลิก</button>
     </div>
 
@@ -183,21 +195,27 @@
 
         window.toggleForm = (editId = null) => {
             const panel = document.getElementById('form-panel');
+            const submitBtn = document.getElementById('submit-btn');
+            
             if (editId) {
                 const r = records.find(x => x.id === editId);
-                document.getElementById('form-title').innerText = "แก้ไขข้อมูล";
+                document.getElementById('form-title').innerText = "แก้ไขข้อมูลการเติม";
+                submitBtn.innerText = "บันทึกการแก้ไข";
                 document.getElementById('edit-id-store').value = editId;
                 document.getElementById('input-odometer').value = r.odo;
                 document.getElementById('input-amount').value = r.amt;
                 document.getElementById('input-price-per-liter').value = r.price;
                 document.getElementById('input-is-full').checked = r.isFull;
+                document.getElementById('input-liters').value = (r.amt / r.price).toFixed(2);
             } else if (!isFormOpen) {
                 document.getElementById('form-title').innerText = "บันทึกการเติมแก๊ส";
+                submitBtn.innerText = "บันทึกลงคลาวด์";
                 document.getElementById('edit-id-store').value = "";
                 document.getElementById('input-odometer').value = "";
                 document.getElementById('input-amount').value = "";
                 document.getElementById('input-price-per-liter').value = records[0]?.price || "15.50";
                 document.getElementById('input-is-full').checked = false;
+                document.getElementById('input-liters').value = "";
             }
             isFormOpen = !isFormOpen;
             panel.style.transform = isFormOpen ? 'translateY(0)' : 'translateY(100%)';
@@ -214,12 +232,20 @@
 
             if (!odo || !amt || !price) return alert("กรุณากรอกข้อมูลให้ครบ");
 
-            const data = { odo, amt, price, isFull, timestamp: Date.now(), lat: currentPos[0], lng: currentPos[1] };
-
             try {
                 if (editId) {
-                    await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'refills', editId), data);
+                    // Update mode: รักษา timestamp และพิกัดเดิมไว้
+                    const r = records.find(x => x.id === editId);
+                    const updateData = { 
+                        odo, amt, price, isFull, 
+                        timestamp: r.timestamp, 
+                        lat: r.lat || currentPos[0], 
+                        lng: r.lng || currentPos[1] 
+                    };
+                    await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'refills', editId), updateData);
                 } else {
+                    // Create mode
+                    const data = { odo, amt, price, isFull, timestamp: Date.now(), lat: currentPos[0], lng: currentPos[1] };
                     await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'refills'), data);
                     await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'stations'), { lat: currentPos[0], lng: currentPos[1], timestamp: Date.now() });
                 }
@@ -316,14 +342,17 @@
                 <div class="space-y-1">
                     <div class="text-[8px] font-bold text-slate-400 uppercase pl-1">${date}</div>
                     ${items.map(r => `
-                        <div onclick="window.toggleForm('${r.id}')" class="bg-white p-3 rounded-xl border border-slate-100 flex justify-between items-center shadow-sm">
-                            <div>
+                        <div onclick="window.toggleForm('${r.id}')" class="bg-white p-3 rounded-xl border border-slate-100 flex justify-between items-center shadow-sm active:bg-blue-50 transition-colors cursor-pointer">
+                            <div class="flex-1">
                                 <div class="text-[11px] font-bold">${r.odo.toLocaleString()} กม.</div>
                                 <div class="text-[8px] text-slate-400">${r.isFull?'เต็มถัง':'เติมเพิ่ม'} • ${new Date(r.timestamp).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})}</div>
                             </div>
-                            <div class="text-right">
-                                <div class="text-[11px] font-bold text-blue-600">${r.amt} ฿</div>
-                                <div class="text-[8px] text-slate-400">${(r.amt/r.price).toFixed(2)} ลิตร</div>
+                            <div class="text-right flex items-center gap-3">
+                                <div>
+                                    <div class="text-[11px] font-bold text-blue-600">${r.amt} ฿</div>
+                                    <div class="text-[8px] text-slate-400">${(r.amt/r.price).toFixed(2)} ลิตร</div>
+                                </div>
+                                <i data-lucide="edit-3" class="w-3.5 h-3.5 text-slate-300"></i>
                             </div>
                         </div>
                     `).join('')}
