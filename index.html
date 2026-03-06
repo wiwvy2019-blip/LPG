@@ -179,16 +179,20 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, onSnapshot, doc, addDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
+        // Firebase Config Guard: ถ้าไม่มี Config จะไม่ทำให้แอปพัง
         let db, auth, currentUser;
         try {
-            const firebaseConfig = JSON.parse(__firebase_config);
-            const app = initializeApp(firebaseConfig);
-            auth = getAuth(app);
-            db = getFirestore(app);
-        } catch(e) { console.warn("Firebase config error"); }
+            if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+                const firebaseConfig = JSON.parse(__firebase_config);
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+            }
+        } catch(e) { console.warn("Firebase not initialized"); }
         
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'lpg-pro-cloud-v1';
 
+        // State & LocalStorage (เครื่องใครเครื่องมันเป็นหลัก)
         let records = JSON.parse(localStorage.getItem('lpg_records') || '[]');
         let stations = JSON.parse(localStorage.getItem('lpg_stations') || '[]');
         let map, userMarker, tripPoints = [];
@@ -198,7 +202,7 @@
         let isHistoryOpen = false;
         let tripDistance = parseFloat(localStorage.getItem('gps_trip_dist')) || 0;
 
-        // AUTH & SYNC
+        // AUTH & SYNC Logic
         const initAuth = async () => {
             if (!auth) return;
             try {
@@ -207,7 +211,7 @@
                 } else {
                     await signInAnonymously(auth);
                 }
-            } catch(e) { console.error(e); }
+            } catch(e) { console.error("Auth Error", e); }
         };
 
         if (auth && db) {
@@ -221,13 +225,13 @@
                             localStorage.setItem('lpg_records', JSON.stringify(records));
                             window.updateUI();
                         }
-                    });
+                    }, (err) => console.warn("Refill Sync Error", err));
                     onSnapshot(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), (snap) => {
                         const cloudStations = snap.docs.map(d => ({ id: d.id, ...d.data() }));
                         stations = cloudStations;
                         localStorage.setItem('lpg_stations', JSON.stringify(stations));
                         window.renderStations();
-                    });
+                    }, (err) => console.warn("Station Sync Error", err));
                 } else {
                     initAuth();
                 }
@@ -280,7 +284,7 @@
             }
         };
 
-        // --- แก้ไขระบบการบันทึก: Local First ป้องกันค้าง ---
+        // --- แก้ไขระบบการบันทึก: บันทึก Local ทันที ป้องกันค้าง ---
         window.addRefillRecord = async () => {
             const odo = parseFloat(document.getElementById('input-odometer').value);
             const amt = parseFloat(document.getElementById('input-amount').value);
@@ -297,11 +301,11 @@
                 timestamp: Date.now() 
             };
 
-            // 1. บันทึก Local ก่อนทันที เพื่อความรวดเร็ว
+            // 1. จัดการข้อมูล Local ทันที (เพื่อให้หน้าจอปิดและ UI อัปเดตทันที)
             if (editId) {
                 const idx = records.findIndex(r => r.id === editId);
                 if (idx !== -1) {
-                    refillData.timestamp = records[idx].timestamp; // รักษาเวลาเดิม
+                    refillData.timestamp = records[idx].timestamp;
                     records[idx] = { ...records[idx], ...refillData };
                 }
             } else {
@@ -310,25 +314,23 @@
             }
             
             localStorage.setItem('lpg_records', JSON.stringify(records));
-            window.updateUI(); // อัปเดต UI ทันที
-            window.toggleForm(); // ปิดฟอร์มทันที ป้องกันหน้าจอค้าง
+            window.updateUI();
+            window.toggleForm(); // ปิดฟอร์มทันที
 
-            // 2. พยายามส่ง Cloud อยู่เบื้องหลัง
+            // 2. พยายามซิงค์ Cloud อยู่เบื้องหลังแบบไม่ขวางการทำงาน UI
             if (db && currentUser) {
                 try {
                     if (editId && !editId.startsWith('temp-')) {
-                        await updateDoc(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'refills', editId), refillData);
+                        updateDoc(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'refills', editId), refillData);
                     } else {
                         const cleanData = { ...refillData };
                         delete cleanData.id;
-                        await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'refills'), cleanData);
-                        await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), { 
-                            lat: currentPos[0], 
-                            lng: currentPos[1], 
-                            timestamp: Date.now() 
+                        addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'refills'), cleanData);
+                        addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), { 
+                            lat: currentPos[0], lng: currentPos[1], timestamp: Date.now() 
                         });
                     }
-                } catch (e) { console.error("Cloud Sync Failed, but data saved locally", e); }
+                } catch (e) { console.warn("Cloud save failed, using local mode", e); }
             }
         };
 
@@ -429,13 +431,15 @@
         };
 
         window.saveCurrentLocationManual = async () => {
-            if (!currentUser || !db) return alert("รอเชื่อมต่อระบบคลาวด์...");
-            try {
-                await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), { 
-                    lat: currentPos[0], lng: currentPos[1], timestamp: Date.now() 
-                });
-                alert("บันทึกพิกัดปั๊มแล้ว");
-            } catch (e) { alert("บันทึกลงคลาวด์ไม่สำเร็จ"); }
+            stations.push({ lat: currentPos[0], lng: currentPos[1], timestamp: Date.now() });
+            localStorage.setItem('lpg_stations', JSON.stringify(stations));
+            window.renderStations();
+            if (db && currentUser) {
+                try {
+                    addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), { lat: currentPos[0], lng: currentPos[1], timestamp: Date.now() });
+                } catch(e) {}
+            }
+            alert("บันทึกพิกัดปั๊มแล้ว");
         };
 
         window.renderStations = () => {
@@ -451,33 +455,35 @@
             if (window.lucide) lucide.createIcons();
         };
 
-        // --- ระบบสร้างแผนที่แบบเน้นความเสถียร ---
+        // --- ระบบสร้างแผนที่แบบเน้นความเสถียรสูงสุด ---
         function initMap() {
             if (map) return;
             const container = document.getElementById('map');
             if (!container) {
-                setTimeout(initMap, 200);
+                setTimeout(initMap, 300);
                 return;
             }
 
-            map = L.map('map', { 
-                zoomControl: false, 
-                attributionControl: false, 
-                rotate: true,
-                fadeAnimation: true
-            }).setView(currentPos, 16);
+            try {
+                map = L.map('map', { 
+                    zoomControl: false, 
+                    attributionControl: false, 
+                    rotate: true,
+                    fadeAnimation: true
+                }).setView(currentPos, 16);
 
-            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', { 
-                maxZoom: 19 
-            }).addTo(map);
+                L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', { 
+                    maxZoom: 19 
+                }).addTo(map);
 
-            userMarker = L.marker(currentPos, { 
-                icon: L.divIcon({ className: 'car-marker', iconSize: [20, 25], iconAnchor: [10, 12] }) 
-            }).addTo(map);
+                userMarker = L.marker(currentPos, { 
+                    icon: L.divIcon({ className: 'car-marker', iconSize: [20, 25], iconAnchor: [10, 12] }) 
+                }).addTo(map);
 
-            // บังคับวาดใหม่ซ้ำๆ เพื่อแก้ปัญหาแผนที่สีเทา
-            map.invalidateSize();
-            [500, 1500, 3000, 5000].forEach(t => setTimeout(() => map.invalidateSize(), t));
+                // บังคับวาดใหม่ซ้ำๆ เพื่อแก้ปัญหาแผนที่สีเทาในอุปกรณ์ iOS/Android
+                map.invalidateSize();
+                [500, 1000, 2000, 5000].forEach(t => setTimeout(() => map.invalidateSize(), t));
+            } catch(e) { console.error("Map Init Error", e); }
         }
 
         function calculateDistance(lat1, lon1, lat2, lon2) {
@@ -535,6 +541,9 @@
                 ltrOut.value = (a && p) ? (a / p).toFixed(2) : '0.00';
             };
             amtIn.addEventListener('input', calc); prcIn.addEventListener('input', calc);
+            
+            // เพิ่มการตรวจจับ Resize เพื่อเรียก InvalidateSize
+            window.addEventListener('resize', () => { if(map) map.invalidateSize(); });
         });
     </script>
 </body>
