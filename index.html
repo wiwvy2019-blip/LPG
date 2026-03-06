@@ -255,6 +255,7 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, doc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
+        // Global States
         let db, auth, user;
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'lpg-insight-cloud-v3';
         let records = JSON.parse(localStorage.getItem('lpg_v3_records') || '[]');
@@ -267,6 +268,7 @@
         const TANK_CAPACITY = 54;
         let lastCalculatedRemainingLiters = 0;
 
+        // Initialize Firebase & Auth
         async function initFirebase() {
             try {
                 const config = JSON.parse(__firebase_config);
@@ -287,15 +289,21 @@
                     user = u;
                     if (user) syncCloudData();
                 });
-            } catch (e) { showToast("Offline Mode"); }
+            } catch (e) { 
+                console.warn("Firebase initialization failed, running in local-only mode.");
+                showToast("ใช้งานแบบออฟไลน์"); 
+            }
         }
 
+        // Sync with Cloud
         function syncCloudData() {
             if (!user || !db) return;
             onSnapshot(collection(db, 'artifacts', appId, 'users', user.uid, 'refills'), (snap) => {
-                records = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.odo - a.odo);
-                localStorage.setItem('lpg_v3_records', JSON.stringify(records));
-                updateUI();
+                if (!snap.empty) {
+                    records = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.odo - a.odo);
+                    localStorage.setItem('lpg_v3_records', JSON.stringify(records));
+                    updateUI();
+                }
             });
             onSnapshot(collection(db, 'artifacts', appId, 'users', user.uid, 'stations'), (snap) => {
                 stations = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -304,7 +312,9 @@
             });
         }
 
+        // Map Functions
         function initMap() {
+            if (map) return;
             map = L.map('map', { zoomControl: false, attributionControl: false }).setView(currentPos, 16);
             L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 20 }).addTo(map);
 
@@ -315,7 +325,7 @@
                 const { lat, lng } = e.latlng;
                 const content = document.createElement('div');
                 content.className = 'p-1 text-center';
-                content.innerHTML = `<p class="text-sm font-bold mb-2">ลงพิกัดปั๊ม?</p><button id="p-add" class="bg-blue-600 text-white text-[10px] px-4 py-1.5 rounded-full font-bold">ตกลง</button>`;
+                content.innerHTML = `<p class="text-sm font-bold mb-2">ลงพิกัดปั๊มที่จุดนี้?</p><button id="p-add" class="bg-blue-600 text-white text-[10px] px-4 py-1.5 rounded-full font-bold shadow-md active:scale-95 transition-all">บันทึกพิกัด</button>`;
                 L.popup().setLatLng(e.latlng).setContent(content).openOn(map);
                 content.querySelector('#p-add').onclick = () => { saveStation(lat, lng); map.closePopup(); };
             });
@@ -327,10 +337,18 @@
         window.locateMe = () => { if (map && currentPos) map.flyTo(currentPos, 17, { duration: 1.5 }); };
 
         window.saveStation = async (lat, lng) => {
-            if (!user || !db) return;
             const targetLat = lat || map.getCenter().lat;
             const targetLng = lng || map.getCenter().lng;
-            try { await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'stations'), { lat: targetLat, lng: targetLng, timestamp: Date.now() }); showToast("บันทึกพิกัดปั๊มแล้ว"); } catch (e) {}
+            const newStation = { lat: targetLat, lng: targetLng, timestamp: Date.now() };
+            
+            // Local update
+            stations.push(newStation);
+            renderStations();
+
+            if (user && db) {
+                try { await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'stations'), newStation); } catch (e) {}
+            }
+            showToast("บันทึกพิกัดปั๊มแล้ว");
         };
 
         function renderStations() {
@@ -340,26 +358,34 @@
                 const marker = L.marker([s.lat, s.lng], { icon: L.divIcon({ className: 'pump-marker', html: '<i data-lucide="fuel" style="width:12px; height:12px"></i>', iconSize: [24, 24] }) }).addTo(map);
                 marker.on('click', (e) => {
                     L.DomEvent.stopPropagation(e);
-                    L.popup().setLatLng([s.lat, s.lng]).setContent(`<div class="p-1 text-center"><p class="text-sm font-bold mb-2">ลบพิกัดนี้?</p><button onclick="deleteStation('${s.id}')" class="bg-red-500 text-white text-[10px] px-4 py-1.5 rounded-full font-bold">ลบ</button></div>`).openOn(map);
+                    L.popup().setLatLng([s.lat, s.lng]).setContent(`<div class="p-1 text-center"><p class="text-sm font-bold mb-2">ลบพิกัดนี้หรือไม่?</p><button onclick="deleteStation('${s.id || s.timestamp}')" class="bg-red-500 text-white text-[10px] px-4 py-1.5 rounded-full font-bold">ยืนยันการลบ</button></div>`).openOn(map);
                 });
             });
             lucide.createIcons();
         }
 
-        window.deleteStation = async (id) => { if (user && db) await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'stations', id)); map.closePopup(); };
+        window.deleteStation = async (id) => {
+            stations = stations.filter(s => (s.id || s.timestamp).toString() !== id.toString());
+            renderStations();
+            if (user && db && id.toString().length > 15) { // Likely a Firebase ID
+                try { await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'stations', id)); } catch (e) {}
+            }
+            map.closePopup();
+        };
 
+        // Tracking & Distance
         function startTracking() {
             if (!navigator.geolocation) return;
             navigator.geolocation.watchPosition(pos => {
                 const { latitude, longitude, speed } = pos.coords;
                 const d = calcDist(currentPos[0], currentPos[1], latitude, longitude);
-                if (d > 0.005) {
+                if (d > 0.005) { // 5 meters minimum
                     tripDistance += d;
                     localStorage.setItem('lpg_v3_trip', tripDistance);
                     pathLine.addLatLng([latitude, longitude]);
                 }
                 currentPos = [latitude, longitude];
-                userMarker.setLatLng(currentPos);
+                if (userMarker) userMarker.setLatLng(currentPos);
                 document.getElementById('display-speed').innerText = speed > 0 ? Math.round(speed * 3.6) : 0;
                 document.getElementById('display-trip').innerText = tripDistance.toFixed(2);
                 updateUI();
@@ -374,16 +400,31 @@
             return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
         }
 
-        window.openForm = () => { document.getElementById('form-modal').classList.remove('hidden'); calculateLiters(); };
+        // Logic & Saving
+        window.openForm = () => { 
+            document.getElementById('form-modal').classList.remove('hidden'); 
+            document.getElementById('inp-price').value = records[0]?.price || "15.50";
+            calculateLiters(); 
+        };
         window.closeForm = () => document.getElementById('form-modal').classList.add('hidden');
-        window.toggleHistory = () => { isDrawerOpen = !isDrawerOpen; document.getElementById('history-drawer').style.transform = isDrawerOpen ? 'translateY(0)' : 'translateY(100%)'; };
+        window.toggleHistory = () => { 
+            isDrawerOpen = !isDrawerOpen; 
+            document.getElementById('history-drawer').style.transform = isDrawerOpen ? 'translateY(0)' : 'translateY(100%)'; 
+        };
 
-        window.resetTrip = () => { tripDistance = 0; localStorage.setItem('lpg_v3_trip', 0); pathLine.setLatLngs([]); showToast("รีเซ็ตทริปแล้ว"); updateUI(); };
+        window.resetTrip = () => { 
+            tripDistance = 0; 
+            localStorage.setItem('lpg_v3_trip', 0); 
+            if(pathLine) pathLine.setLatLngs([]); 
+            showToast("รีเซ็ตทริปสำเร็จ"); 
+            updateUI(); 
+        };
 
         window.calculateLiters = () => {
             const cost = parseFloat(document.getElementById('inp-cost').value);
             const price = parseFloat(document.getElementById('inp-price').value);
-            document.getElementById('inp-liters-display').value = (!isNaN(cost) && !isNaN(price) && price > 0) ? (cost / price).toFixed(2) : "0.00";
+            const liters = (!isNaN(cost) && !isNaN(price) && price > 0) ? (cost / price) : 0;
+            document.getElementById('inp-liters-display').value = liters.toFixed(2);
         };
 
         window.saveRecord = async () => {
@@ -392,9 +433,11 @@
             const price = parseFloat(document.getElementById('inp-price').value);
             const isFull = document.getElementById('inp-is-full').checked;
             
-            if (isNaN(odo) || isNaN(cost) || isNaN(price)) return showToast("ข้อมูลไม่ครบ");
+            if (isNaN(odo) || isNaN(cost) || isNaN(price)) return showToast("กรุณากรอกข้อมูลให้ครบถ้วน");
 
             const newLiters = cost / price;
+            
+            // Logic: ถ้าเต็มถัง = 54 ลิตร | ถ้าไม่เต็ม = แก๊สเหลือ + แก๊สใหม่
             let totalLitersAfterRefill = isFull ? TANK_CAPACITY : (lastCalculatedRemainingLiters + newLiters);
             if (totalLitersAfterRefill > TANK_CAPACITY) totalLitersAfterRefill = TANK_CAPACITY;
 
@@ -406,47 +449,70 @@
                 tripAtRefill: tripDistance 
             };
 
+            // Local First: อัปเดต UI ทันทีไม่ต้องรอ Cloud
+            records.unshift({ id: 'temp-' + Date.now(), ...payload });
+            localStorage.setItem('lpg_v3_records', JSON.stringify(records));
+            updateUI();
+            closeForm();
+            showToast("บันทึกข้อมูลเรียบร้อย");
+
+            // Cloud Async: บันทึกขึ้น Cloud เงียบๆ
             if (user && db) {
-                try {
-                    await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'refills'), payload);
-                    closeForm();
-                    showToast("บันทึกสำเร็จ");
-                } catch (e) { showToast("Error"); }
+                try { await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'refills'), payload); } catch (e) { console.error("Cloud save failed", e); }
             }
         };
 
-        window.deleteRecord = async (id) => { if (user && db) await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'refills', id)); };
+        window.deleteRecord = async (id) => {
+            records = records.filter(r => (r.id || r.timestamp).toString() !== id.toString());
+            localStorage.setItem('lpg_v3_records', JSON.stringify(records));
+            updateUI();
+            if (user && db && id.toString().length > 15) {
+                try { await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'refills', id)); } catch (e) {}
+            }
+        };
 
         function updateUI() {
             const mode = document.getElementById('metric-mode').value;
-            let avgKmL = 10;
+            
+            // 1. Calculate Average KM/L (อ้างอิงจากประวัติ)
+            let avgKmL = 10; // Default
             if (records.length >= 2) {
                 const totalDist = records[0].odo - records[records.length - 1].odo;
                 let totalLitersUsed = 0;
+                // คำนวณแก๊สที่ใช้ไประหว่างจุด A ถึง B
                 for (let i = 0; i < records.length - 1; i++) totalLitersUsed += records[i].litersFilled;
                 if (totalDist > 0 && totalLitersUsed > 0) avgKmL = totalDist / totalLitersUsed;
             }
 
+            // 2. Display Averages
             const displayAvg = mode === 'kml' ? avgKmL.toFixed(1) : (records[0] ? (records[0].price / avgKmL).toFixed(2) : '--');
             document.getElementById('display-avg').innerText = records.length >= 2 ? displayAvg : '--';
             document.getElementById('display-unit').innerText = mode === 'kml' ? 'KM/L' : '฿/KM';
 
+            // 3. Current Gas & Range Calculation
             const lastRecord = records[0];
             if (lastRecord) {
                 const distSinceLastRefill = tripDistance - (lastRecord.tripAtRefill || 0);
                 const fuelConsumed = distSinceLastRefill / avgKmL;
                 let currentLiters = Math.max(0, lastRecord.totalLitersAfterRefill - fuelConsumed);
-                lastCalculatedRemainingLiters = currentLiters;
+                
+                lastCalculatedRemainingLiters = currentLiters; // เก็บไว้ใช้บวกตอนเติมครั้งถัดไป
+                
                 const range = currentLiters * avgKmL;
 
                 document.getElementById('gas-remain-val').innerText = `${currentLiters.toFixed(1)} L`;
                 document.getElementById('gas-range-fill').style.width = `${(currentLiters / TANK_CAPACITY) * 100}%`;
                 document.getElementById('display-range').innerText = Math.floor(range);
-                document.getElementById('gas-range-fill').style.background = currentLiters < 10 ? '#ef4444' : 'linear-gradient(90deg, #3b82f6, #60a5fa)';
+                document.getElementById('gas-range-fill').style.background = currentLiters < 8 ? '#ef4444' : 'linear-gradient(90deg, #3b82f6, #60a5fa)';
+            } else {
+                document.getElementById('display-range').innerText = "0";
+                document.getElementById('gas-remain-val').innerText = "0.0 L";
+                document.getElementById('gas-range-fill').style.width = "0%";
             }
 
+            // 4. Render History
             document.getElementById('history-list').innerHTML = records.map(r => `
-                <div class="bg-white/60 border border-slate-100 p-3.5 rounded-2xl flex justify-between items-center group shadow-sm">
+                <div class="bg-white/60 border border-slate-100 p-3.5 rounded-2xl flex justify-between items-center group shadow-sm transition-all active:scale-[0.98]">
                     <div>
                         <div class="flex items-center gap-1.5 mb-0.5">
                             <span class="text-xl font-bold text-slate-800">${r.odo.toLocaleString()}</span>
@@ -458,7 +524,7 @@
                     </div>
                     <div class="flex items-center gap-4">
                         <span class="text-2xl font-black text-emerald-600">${r.cost} ฿</span>
-                        <button onclick="deleteRecord('${r.id}')" class="text-red-300 opacity-0 group-hover:opacity-100 transition-opacity"><i data-lucide="trash-2" class="w-5 h-5"></i></button>
+                        <button onclick="deleteRecord('${r.id || r.timestamp}')" class="text-red-300 opacity-0 group-hover:opacity-100 transition-opacity"><i data-lucide="trash-2" class="w-5 h-5"></i></button>
                     </div>
                 </div>
             `).join('');
@@ -467,13 +533,36 @@
 
         function showToast(msg) {
             const toast = document.getElementById('toast');
-            document.getElementById('toast-msg').innerText = msg;
+            const toastMsg = document.getElementById('toast-msg');
+            toastMsg.innerText = msg;
             toast.classList.replace('opacity-0', 'opacity-100');
             setTimeout(() => toast.classList.replace('opacity-100', 'opacity-0'), 3000);
         }
 
-        window.onload = () => { initFirebase(); initMap(); startTracking(); updateUI(); };
+        // Global exports for onclick
+        window.calculateLiters = calculateLiters;
+        window.saveRecord = saveRecord;
+        window.deleteRecord = deleteRecord;
+        window.deleteStation = deleteStation;
         window.updateUI = updateUI;
+        window.exportData = () => {
+            const data = JSON.stringify({records, stations, tripDistance}, null, 2);
+            const blob = new Blob([data], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `lpg-insight-export-${Date.now()}.json`;
+            a.click();
+            showToast("ส่งออกข้อมูลสำเร็จ");
+        };
+
+        // App Start
+        window.addEventListener('load', () => {
+            initFirebase();
+            initMap();
+            startTracking();
+            updateUI();
+        });
     </script>
 </body>
 </html>
