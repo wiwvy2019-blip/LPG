@@ -13,21 +13,31 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <!-- เพิ่ม Plugin สำหรับหมุนแผนที่ (Heading Up) -->
+    <!-- Plugin สำหรับหมุนแผนที่ (Heading Up) -->
     <script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate.js"></script>
 
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap');
         
-        html, body { height: 100%; margin: 0; padding: 0; background-color: #f8fafc; overflow: hidden; }
-        body { font-family: 'Kanit', sans-serif; color: #1e293b; position: relative; }
+        html, body { 
+            height: 100%; 
+            width: 100%; 
+            margin: 0; 
+            padding: 0; 
+            background-color: #f8fafc; 
+            overflow: hidden; 
+            position: fixed; /* ป้องกันการเลื่อนหน้าจอไปมาบนมือถือ */
+        }
+        
+        body { font-family: 'Kanit', sans-serif; color: #1e293b; }
         
         #map { 
             position: absolute; 
-            top: 0; bottom: 0; left: 0; right: 0; 
+            top: 0; 
+            left: 0; 
+            width: 100vw; 
+            height: 100vh; 
             z-index: 1; 
-            height: 100%; 
-            width: 100%; 
             background: #e5e7eb;
         }
         
@@ -35,7 +45,6 @@
         .interactable { pointer-events: auto; }
         .glass-ui { background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.5); }
         
-        /* สัญลักษณ์ตัวรถแบบลูกศรเพื่อให้เห็นทิศทางชัดเจน */
         .car-marker {
             width: 0; height: 0;
             border-left: 10px solid transparent;
@@ -161,10 +170,17 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, onSnapshot, doc, setDoc, addDoc, updateDoc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
+        // ป้องกัน Error หาก Config ไม่ถูกส่งมา
+        const rawConfig = typeof __firebase_config !== 'undefined' ? __firebase_config : '{}';
+        const firebaseConfig = JSON.parse(rawConfig);
+        
+        let db, auth;
+        if (firebaseConfig.apiKey) {
+            const app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+        }
+        
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'lpg-pro-v1';
 
         let records = [];
@@ -176,6 +192,7 @@
         let tripDistance = parseFloat(localStorage.getItem('gps_trip_dist')) || 0;
 
         const initAuth = async () => {
+            if (!auth) return;
             if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                 await signInWithCustomToken(auth, __initial_auth_token);
             } else {
@@ -183,20 +200,22 @@
             }
         };
 
-        onAuthStateChanged(auth, (user) => {
-            if (user) {
-                onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'refills'), (snap) => {
-                    records = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => b.timestamp - a.timestamp);
-                    updateUI();
-                });
-                onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'stations'), (snap) => {
-                    stations = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    renderStations();
-                });
-            } else {
-                initAuth();
-            }
-        });
+        if (auth) {
+            onAuthStateChanged(auth, (user) => {
+                if (user) {
+                    onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'refills'), (snap) => {
+                        records = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => b.timestamp - a.timestamp);
+                        updateUI();
+                    });
+                    onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'stations'), (snap) => {
+                        stations = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        renderStations();
+                    });
+                } else {
+                    initAuth();
+                }
+            });
+        }
 
         window.toggleForm = (editId = null) => {
             const panel = document.getElementById('form-panel');
@@ -209,10 +228,14 @@
             }
             isFormOpen = !isFormOpen;
             panel.style.transform = isFormOpen ? 'translateY(0)' : 'translateY(100%)';
-            if (!isFormOpen && map) setTimeout(() => map.invalidateSize(), 500);
+            if (!isFormOpen && map) {
+                setTimeout(() => map.invalidateSize(), 100);
+                setTimeout(() => map.invalidateSize(), 500);
+            }
         };
 
         window.addRefillRecord = async () => {
+            if (!db) return alert("ระบบคลาวด์ไม่ได้เชื่อมต่อ");
             const odo = parseFloat(document.getElementById('input-odometer').value);
             const amt = parseFloat(document.getElementById('input-amount').value);
             const price = parseFloat(document.getElementById('input-price-per-liter').value);
@@ -235,6 +258,8 @@
         };
 
         function initMap() {
+            if (map) return; // ป้องกันการสร้างซ้ำ
+            
             map = L.map('map', { 
                 zoomControl: false, 
                 attributionControl: false,
@@ -254,7 +279,9 @@
                 }) 
             }).addTo(map);
 
-            setTimeout(() => map.invalidateSize(), 300);
+            // บังคับให้แผนที่คำนวณขนาดซ้ำๆ ในช่วงแรก
+            const timers = [100, 500, 1000, 3000];
+            timers.forEach(t => setTimeout(() => map.invalidateSize(), t));
         }
 
         function getOffsetCenter(lat, lng, heading, distanceKm) {
@@ -304,7 +331,11 @@
                 }
                 
                 updateUI();
-            }, (err) => console.warn(err), { enableHighAccuracy: true });
+            }, (err) => {
+                console.warn(err);
+                // แสดงแผนที่แม้ GPS พัง
+                if (!map) initMap();
+            }, { enableHighAccuracy: true });
         }
 
         function calculateDistance(lat1, lon1, lat2, lon2) {
@@ -333,7 +364,18 @@
             if (window.lucide) lucide.createIcons();
         };
 
-        window.onload = () => {
+        window.saveCurrentLocationManual = async () => {
+            if (!db) return;
+            try {
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'stations'), {
+                    lat: currentPos[0],
+                    lng: currentPos[1],
+                    timestamp: Date.now()
+                });
+            } catch (e) { alert(e.message); }
+        };
+
+        window.addEventListener('load', () => {
             if(window.lucide) lucide.createIcons();
             initMap();
             startTracking();
@@ -344,7 +386,7 @@
             const calc = () => ltr.value = (amt.value && prc.value) ? (amt.value/prc.value).toFixed(2) : '0.00';
             amt.addEventListener('input', calc);
             prc.addEventListener('input', calc);
-        };
+        });
     </script>
 </body>
 </html>
