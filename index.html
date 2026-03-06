@@ -40,12 +40,12 @@
         }
 
         .car-marker {
-            width: 32px; height: 32px;
+            width: 26px; height: 26px;
             background: #2563eb;
-            border: 4px solid white;
+            border: 3px solid white;
             border-radius: 50% 50% 50% 0;
             transform: rotate(-45deg);
-            box-shadow: 0 0 20px rgba(37, 99, 235, 0.6);
+            box-shadow: 0 0 12px rgba(37, 99, 235, 0.6);
         }
 
         .pump-marker {
@@ -56,7 +56,7 @@
             align-items: center;
             justify-content: center;
             color: white;
-            box-shadow: 0 6px 16px rgba(239, 68, 68, 0.4);
+            box-shadow: 0 4px 10px rgba(239, 68, 68, 0.4);
         }
 
         @keyframes slideUp {
@@ -67,12 +67,12 @@
         .animate-slide-up { animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         
-        .range-bar { height: 10px; background: #e2e8f0; border-radius: 5px; overflow: hidden; }
+        .range-bar { height: 7px; background: #e2e8f0; border-radius: 4px; overflow: hidden; }
         .range-fill { height: 100%; background: linear-gradient(90deg, #3b82f6, #60a5fa); transition: width 0.5s ease; }
 
         .leaflet-popup-content-wrapper {
-            border-radius: 20px;
-            padding: 8px;
+            border-radius: 16px;
+            padding: 5px;
             background: rgba(255, 255, 255, 0.95);
             backdrop-filter: blur(10px);
         }
@@ -86,167 +86,167 @@
     <div id="map"></div>
 
     <!-- UI Overlay: Top Stats -->
-    <div class="fixed top-0 left-0 right-0 z-[1000] p-4 pt-[calc(1.5rem+env(safe-area-inset-top))] flex justify-between items-start pointer-events-none">
-        <div class="flex flex-col gap-3">
-            <div class="glass-panel pointer-events-auto p-4 rounded-3xl flex items-center gap-4">
-                <div class="bg-blue-600 p-3 rounded-2xl text-white shadow-lg shadow-blue-200">
-                    <i data-lucide="gauge" class="w-8 h-8"></i>
+    <div class="fixed top-0 left-0 right-0 z-[1000] p-4 pt-[calc(0.8rem+env(safe-area-inset-top))] flex justify-between items-start pointer-events-none">
+        <div class="flex flex-col gap-2">
+            <div class="glass-panel pointer-events-auto p-2.5 rounded-2xl flex items-center gap-3">
+                <div class="bg-blue-600 p-1.5 rounded-xl text-white shadow-md">
+                    <i data-lucide="gauge" class="w-5 h-5"></i>
                 </div>
                 <div>
-                    <span class="text-[15px] font-bold text-slate-500 uppercase tracking-wider block leading-none mb-1">ความเร็ว</span>
+                    <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wider block leading-none mb-1">ความเร็ว</span>
                     <div class="flex items-baseline gap-1">
-                        <span id="display-speed" class="text-5xl font-black text-slate-800 leading-none">0</span>
-                        <span class="text-lg font-bold text-slate-400">กม./ชม.</span>
+                        <span id="display-speed" class="text-3xl font-black text-slate-800 leading-none">0</span>
+                        <span class="text-xs font-bold text-slate-400">กม./ชม.</span>
                     </div>
                 </div>
             </div>
 
             <!-- Range Widget -->
-            <div class="glass-panel pointer-events-auto p-4 rounded-3xl flex items-center gap-4 border-l-8 border-blue-500">
-                <div class="bg-slate-100 p-3 rounded-2xl text-blue-600">
-                    <i data-lucide="zap" class="w-8 h-8"></i>
+            <div class="glass-panel pointer-events-auto p-2.5 rounded-2xl flex items-center gap-3 border-l-4 border-blue-500">
+                <div class="bg-slate-100 p-1.5 rounded-xl text-blue-600">
+                    <i data-lucide="zap" class="w-5 h-5"></i>
                 </div>
                 <div>
-                    <span class="text-[15px] font-bold text-slate-500 uppercase tracking-wider block leading-none mb-1">ระยะที่วิ่งได้</span>
+                    <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wider block leading-none mb-1">ระยะที่วิ่งได้</span>
                     <div class="flex items-baseline gap-1">
-                        <span id="display-range" class="text-5xl font-black text-blue-600 leading-none">0</span>
-                        <span class="text-lg font-bold text-slate-400">กม.</span>
+                        <span id="display-range" class="text-3xl font-black text-blue-600 leading-none">0</span>
+                        <span class="text-xs font-bold text-slate-400">กม.</span>
                     </div>
                 </div>
             </div>
         </div>
 
-        <div class="flex flex-col gap-3 items-end">
-            <div class="glass-panel pointer-events-auto p-4 rounded-3xl min-w-[160px]">
-                <div class="flex items-center justify-between gap-3 mb-2">
-                    <span class="text-[15px] font-bold text-emerald-600 uppercase tracking-wider">ประสิทธิภาพ</span>
-                    <select id="metric-mode" onchange="updateUI()" class="text-[12px] bg-slate-100 rounded-lg px-2 py-1 outline-none border-none font-bold">
+        <div class="flex flex-col gap-2 items-end">
+            <div class="glass-panel pointer-events-auto p-2.5 rounded-2xl min-w-[110px]">
+                <div class="flex items-center justify-between gap-2 mb-1">
+                    <span class="text-[11px] font-bold text-emerald-600 uppercase tracking-wider">ประสิทธิภาพ</span>
+                    <select id="metric-mode" onchange="updateUI()" class="text-[9px] bg-slate-100 rounded px-1 py-0.5 outline-none font-bold">
                         <option value="kml">กม./ลิตร</option>
                         <option value="bkm">บาท/กม.</option>
                     </select>
                 </div>
                 <div class="flex items-baseline gap-1">
-                    <span id="display-avg" class="text-5xl font-black text-slate-800 leading-none">--</span>
-                    <span id="display-unit" class="text-lg font-bold text-slate-400 uppercase tracking-tighter">KM/L</span>
+                    <span id="display-avg" class="text-3xl font-black text-slate-800 leading-none">--</span>
+                    <span id="display-unit" class="text-xs font-bold text-slate-400 uppercase tracking-tighter">KM/L</span>
                 </div>
             </div>
         </div>
     </div>
 
     <!-- Map Controls -->
-    <div class="fixed right-4 top-1/2 -translate-y-1/2 z-[1000] flex flex-col gap-4">
-        <button onclick="locateMe()" class="w-16 h-16 glass-panel rounded-full flex items-center justify-center text-blue-600 shadow-xl active:scale-90 transition-transform">
-            <i data-lucide="navigation" class="w-8 h-8"></i>
+    <div class="fixed right-4 top-1/2 -translate-y-1/2 z-[1000] flex flex-col gap-3">
+        <button onclick="locateMe()" class="w-12 h-12 glass-panel rounded-full flex items-center justify-center text-blue-600 shadow-lg active:scale-90 transition-transform">
+            <i data-lucide="navigation" class="w-6 h-6"></i>
         </button>
-        <button onclick="saveStation()" class="w-16 h-16 glass-panel rounded-full flex items-center justify-center text-emerald-600 shadow-xl active:scale-90 transition-transform">
-            <i data-lucide="map-pin-plus" class="w-8 h-8"></i>
+        <button onclick="saveStation()" class="w-12 h-12 glass-panel rounded-full flex items-center justify-center text-emerald-600 shadow-lg active:scale-90 transition-transform">
+            <i data-lucide="map-pin-plus" class="w-6 h-6"></i>
         </button>
     </div>
 
     <!-- History Panel -->
     <div id="history-drawer" class="fixed inset-x-0 bottom-0 z-[2000] translate-y-full transition-transform duration-500 ease-out">
-        <div class="glass-panel rounded-t-[3.5rem] p-8 shadow-2xl max-h-[85vh] overflow-hidden flex flex-col">
-            <div class="w-16 h-2 bg-slate-300 rounded-full mx-auto mb-8 cursor-pointer" onclick="toggleHistory()"></div>
-            <div class="flex justify-between items-center mb-8 px-2">
-                <h3 class="text-3xl font-bold text-slate-800">ประวัติการเติม</h3>
-                <button onclick="exportData()" class="text-blue-600 text-sm font-bold flex items-center gap-2 bg-blue-50 px-5 py-2.5 rounded-full">
-                    <i data-lucide="download" class="w-5 h-5"></i> ส่งออก
+        <div class="glass-panel rounded-t-[2rem] p-5 shadow-2xl max-h-[75vh] overflow-hidden flex flex-col">
+            <div class="w-10 h-1 bg-slate-300 rounded-full mx-auto mb-5 cursor-pointer" onclick="toggleHistory()"></div>
+            <div class="flex justify-between items-center mb-5 px-1">
+                <h3 class="text-xl font-bold text-slate-800">ประวัติการเติม</h3>
+                <button onclick="exportData()" class="text-blue-600 text-[10px] font-bold flex items-center gap-1 bg-blue-50 px-3 py-1.5 rounded-full">
+                    <i data-lucide="download" class="w-3.5 h-3.5"></i> ส่งออก
                 </button>
             </div>
-            <div id="history-list" class="flex-grow overflow-y-auto space-y-4 no-scrollbar pb-16"></div>
+            <div id="history-list" class="flex-grow overflow-y-auto space-y-2.5 no-scrollbar pb-10"></div>
         </div>
     </div>
 
     <!-- Main Control Bar -->
-    <div class="fixed bottom-0 left-0 right-0 z-[1001] p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
-        <div class="glass-panel rounded-[3rem] p-6 flex items-center justify-between shadow-2xl border-t-2 border-white/50">
+    <div class="fixed bottom-0 left-0 right-0 z-[1001] p-4 pb-[calc(0.8rem+env(safe-area-inset-bottom))]">
+        <div class="glass-panel rounded-[1.8rem] p-3.5 flex items-center justify-between shadow-2xl">
             <div class="flex-1">
-                <div class="flex justify-between items-end mb-2">
-                    <span class="text-[15px] font-bold text-slate-500 uppercase tracking-widest leading-none">แก๊สในถัง</span>
-                    <span id="gas-remain-val" class="text-2xl font-black text-blue-600 leading-none">0.0 L</span>
+                <div class="flex justify-between items-end mb-1">
+                    <span class="text-[11px] font-bold text-slate-500 uppercase tracking-widest leading-none">แก๊สในถัง</span>
+                    <span id="gas-remain-val" class="text-lg font-black text-blue-600 leading-none">0.0 L</span>
                 </div>
                 <div class="range-bar">
                     <div id="gas-range-fill" class="range-fill" style="width: 0%"></div>
                 </div>
             </div>
 
-            <div class="mx-8 relative">
-                <button onclick="openForm()" class="w-24 h-24 bg-blue-600 text-white rounded-[2.5rem] flex items-center justify-center shadow-2xl shadow-blue-300 active:scale-90 transition-transform -mt-20 border-[6px] border-white">
-                    <i data-lucide="plus" class="w-12 h-12"></i>
+            <div class="mx-5 relative">
+                <button onclick="openForm()" class="w-16 h-16 bg-blue-600 text-white rounded-[1.8rem] flex items-center justify-center shadow-xl active:scale-90 transition-transform -mt-14 border-[4px] border-white">
+                    <i data-lucide="plus" class="w-9 h-9"></i>
                 </button>
             </div>
 
-            <div class="flex-1 flex justify-end gap-6">
+            <div class="flex-1 flex justify-end gap-3.5">
                 <button onclick="toggleHistory()" class="flex flex-col items-center text-slate-400 hover:text-blue-600 transition-colors">
-                    <i data-lucide="calendar-days" class="w-10 h-10"></i>
-                    <span class="text-[12px] font-bold uppercase mt-1">ประวัติ</span>
+                    <i data-lucide="calendar-days" class="w-7 h-7"></i>
+                    <span class="text-[9px] font-bold uppercase mt-1">ประวัติ</span>
                 </button>
                 <button onclick="resetTrip()" class="flex flex-col items-center text-slate-400 hover:text-red-600 transition-colors">
-                    <i data-lucide="rotate-ccw" class="w-10 h-10"></i>
-                    <span class="text-[12px] font-bold uppercase mt-1">รีเซ็ต</span>
+                    <i data-lucide="rotate-ccw" class="w-7 h-7"></i>
+                    <span class="text-[9px] font-bold uppercase mt-1">รีเซ็ต</span>
                 </button>
             </div>
         </div>
         
-        <div class="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-8 py-3 rounded-full shadow-2xl flex items-center gap-3">
-            <i data-lucide="milestone" class="w-5 h-5 text-blue-400"></i>
-            <span class="text-[15px] font-bold tracking-widest uppercase">ทริป: <span id="display-trip" class="text-white text-xl ml-1">0.00</span> กม.</span>
+        <div class="absolute -top-5 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-5 py-1.5 rounded-full shadow-lg flex items-center gap-2">
+            <i data-lucide="milestone" class="w-3.5 h-3.5 text-blue-400"></i>
+            <span class="text-[11px] font-bold tracking-widest uppercase">ทริป: <span id="display-trip" class="text-white text-base ml-1">0.00</span> กม.</span>
         </div>
     </div>
 
     <!-- Form Modal -->
     <div id="form-modal" class="fixed inset-0 z-[3000] hidden">
         <div class="absolute inset-0 bg-slate-900/70 backdrop-blur-md" onclick="closeForm()"></div>
-        <div class="absolute inset-x-0 bottom-0 glass-panel rounded-t-[4rem] p-10 animate-slide-up">
-            <div class="flex justify-between items-center mb-10">
+        <div class="absolute inset-x-0 bottom-0 glass-panel rounded-t-[2.5rem] p-7 animate-slide-up">
+            <div class="flex justify-between items-center mb-6">
                 <div>
-                    <h2 class="text-4xl font-bold text-slate-800" id="form-title">บันทึกข้อมูล</h2>
-                    <p class="text-slate-500 text-xl">ระบุข้อมูลการเติมแก๊ส</p>
+                    <h2 class="text-2xl font-bold text-slate-800" id="form-title">บันทึกข้อมูล</h2>
+                    <p class="text-slate-500 text-base">ระบุข้อมูลการเติมแก๊ส</p>
                 </div>
-                <button onclick="closeForm()" class="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center text-slate-400">
-                    <i data-lucide="x" class="w-10 h-10"></i>
+                <button onclick="closeForm()" class="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-400">
+                    <i data-lucide="x" class="w-7 h-7"></i>
                 </button>
             </div>
 
-            <div class="grid grid-cols-2 gap-5 mb-8">
+            <div class="grid grid-cols-2 gap-4 mb-5">
                 <div class="col-span-2">
-                    <label class="text-[15px] font-bold text-slate-500 uppercase tracking-widest mb-2 block ml-2">เลขไมล์รถยนต์ (ODO)</label>
-                    <input type="number" id="inp-odo" class="w-full bg-slate-100/50 border-4 border-slate-200 rounded-3xl p-5 text-4xl font-bold text-slate-800 focus:border-blue-500 outline-none transition-colors" placeholder="0">
+                    <label class="text-[12px] font-bold text-slate-500 uppercase tracking-widest mb-1 block ml-1">เลขไมล์รถยนต์ (ODO)</label>
+                    <input type="number" id="inp-odo" class="w-full bg-slate-100/50 border-[2px] border-slate-200 rounded-xl p-3 text-2xl font-bold text-slate-800 focus:border-blue-500 outline-none" placeholder="0">
                 </div>
                 <div>
-                    <label class="text-[15px] font-bold text-slate-500 uppercase tracking-widest mb-2 block ml-2">จำนวนเงิน (บาท)</label>
-                    <input type="number" id="inp-cost" oninput="calculateLiters()" class="w-full bg-slate-100/50 border-4 border-slate-200 rounded-3xl p-5 text-4xl font-bold text-slate-800 focus:border-blue-500 outline-none transition-colors" placeholder="0">
+                    <label class="text-[12px] font-bold text-slate-500 uppercase tracking-widest mb-1 block ml-1">จำนวนเงิน (บาท)</label>
+                    <input type="number" id="inp-cost" oninput="calculateLiters()" class="w-full bg-slate-100/50 border-[2px] border-slate-200 rounded-xl p-3 text-2xl font-bold text-slate-800 focus:border-blue-500 outline-none" placeholder="0">
                 </div>
                 <div>
-                    <label class="text-[15px] font-bold text-slate-500 uppercase tracking-widest mb-2 block ml-2">ราคา/ลิตร</label>
-                    <input type="number" step="0.01" id="inp-price" oninput="calculateLiters()" class="w-full bg-slate-100/50 border-4 border-slate-200 rounded-3xl p-5 text-4xl font-bold text-slate-800 focus:border-blue-500 outline-none transition-colors" placeholder="0.00">
+                    <label class="text-[12px] font-bold text-slate-500 uppercase tracking-widest mb-1 block ml-1">ราคา/ลิตร</label>
+                    <input type="number" step="0.01" id="inp-price" oninput="calculateLiters()" class="w-full bg-slate-100/50 border-[2px] border-slate-200 rounded-xl p-3 text-2xl font-bold text-slate-800 focus:border-blue-500 outline-none" placeholder="0.00">
                 </div>
                 <div class="col-span-2">
-                    <label class="text-[15px] font-bold text-blue-600 uppercase tracking-widest mb-2 block ml-2">ปริมาณที่เติม (ลิตร)</label>
+                    <label class="text-[12px] font-bold text-blue-600 uppercase tracking-widest mb-1 block ml-1">ปริมาณที่เติม (ลิตร)</label>
                     <div class="relative">
-                        <input type="text" id="inp-liters-display" readonly class="w-full bg-blue-100/30 border-4 border-blue-200 rounded-3xl p-5 text-4xl font-bold text-blue-700 outline-none" placeholder="0.00">
-                        <span class="absolute right-6 top-1/2 -translate-y-1/2 text-xl font-bold text-blue-400">ลิตร</span>
+                        <input type="text" id="inp-liters-display" readonly class="w-full bg-blue-100/30 border-[2px] border-blue-200 rounded-xl p-3 text-2xl font-bold text-blue-700 outline-none" placeholder="0.00">
+                        <span class="absolute right-4 top-1/2 -translate-y-1/2 text-base font-bold text-blue-400">ลิตร</span>
                     </div>
                 </div>
             </div>
 
-            <div class="flex items-center gap-6 mb-10 bg-blue-50 p-6 rounded-[2.5rem] border-2 border-blue-100">
-                <input type="checkbox" id="inp-is-full" class="w-10 h-10 rounded-xl text-blue-600 border-4 border-blue-200">
-                <label for="inp-is-full" class="font-bold text-blue-800 text-2xl">เติมเต็มถัง (เซ็ตเป็น 54 ลิตร)</label>
+            <div class="flex items-center gap-3 mb-6 bg-blue-50 p-3.5 rounded-xl border-2 border-blue-100">
+                <input type="checkbox" id="inp-is-full" class="w-7 h-7 rounded text-blue-600 border-2 border-blue-200">
+                <label for="inp-is-full" class="font-bold text-blue-800 text-lg">เติมเต็มถัง (54 ลิตร)</label>
             </div>
 
-            <button onclick="saveRecord()" class="w-full bg-blue-600 text-white py-6 rounded-3xl text-3xl font-bold shadow-2xl shadow-blue-200 active:bg-blue-700 transition-all flex items-center justify-center gap-4">
-                <i data-lucide="check-circle" class="w-10 h-10"></i>
+            <button onclick="saveRecord()" class="w-full bg-blue-600 text-white py-4 rounded-xl text-xl font-bold shadow-xl active:bg-blue-700 transition-all flex items-center justify-center gap-3">
+                <i data-lucide="check-circle" class="w-7 h-7"></i>
                 ยืนยันบันทึก
             </button>
-            <div class="h-8"></div>
+            <div class="h-4"></div>
         </div>
     </div>
 
     <!-- Toast -->
-    <div id="toast" class="fixed top-12 left-1/2 -translate-x-1/2 z-[4000] opacity-0 transition-all duration-300 pointer-events-none">
-        <div class="bg-slate-900 text-white px-10 py-5 rounded-3xl shadow-2xl flex items-center gap-4">
-            <span id="toast-msg" class="text-xl font-bold"></span>
+    <div id="toast" class="fixed top-8 left-1/2 -translate-x-1/2 z-[4000] opacity-0 transition-all duration-300 pointer-events-none">
+        <div class="bg-slate-900 text-white px-6 py-3 rounded-xl shadow-2xl flex items-center gap-3">
+            <span id="toast-msg" class="text-base font-bold"></span>
         </div>
     </div>
 
@@ -309,13 +309,13 @@
             L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 20 }).addTo(map);
 
             userMarker = L.marker(currentPos, { icon: L.divIcon({ className: 'car-marker' }) }).addTo(map);
-            pathLine = L.polyline([], { color: '#2563eb', weight: 6, opacity: 0.4, dashArray: '8, 12' }).addTo(map);
+            pathLine = L.polyline([], { color: '#2563eb', weight: 4, opacity: 0.4, dashArray: '5, 8' }).addTo(map);
 
             map.on('click', (e) => {
                 const { lat, lng } = e.latlng;
                 const content = document.createElement('div');
-                content.className = 'p-3 text-center';
-                content.innerHTML = `<p class="text-lg font-bold mb-4">ลงพิกัดปั๊มที่นี่?</p><button id="p-add" class="bg-blue-600 text-white text-sm px-6 py-3 rounded-full font-bold">ยืนยัน</button>`;
+                content.className = 'p-1 text-center';
+                content.innerHTML = `<p class="text-sm font-bold mb-2">ลงพิกัดปั๊ม?</p><button id="p-add" class="bg-blue-600 text-white text-[10px] px-4 py-1.5 rounded-full font-bold">ตกลง</button>`;
                 L.popup().setLatLng(e.latlng).setContent(content).openOn(map);
                 content.querySelector('#p-add').onclick = () => { saveStation(lat, lng); map.closePopup(); };
             });
@@ -337,10 +337,10 @@
             if (!map) return;
             map.eachLayer(l => { if (l instanceof L.Marker && l !== userMarker) map.removeLayer(l); });
             stations.forEach(s => {
-                const marker = L.marker([s.lat, s.lng], { icon: L.divIcon({ className: 'pump-marker', html: '<i data-lucide="fuel" style="width:16px; height:16px"></i>', iconSize: [32, 32] }) }).addTo(map);
+                const marker = L.marker([s.lat, s.lng], { icon: L.divIcon({ className: 'pump-marker', html: '<i data-lucide="fuel" style="width:12px; height:12px"></i>', iconSize: [24, 24] }) }).addTo(map);
                 marker.on('click', (e) => {
                     L.DomEvent.stopPropagation(e);
-                    L.popup().setLatLng([s.lat, s.lng]).setContent(`<div class="p-3 text-center"><p class="text-lg font-bold mb-4">ลบพิกัดนี้?</p><button onclick="deleteStation('${s.id}')" class="bg-red-500 text-white text-sm px-6 py-2 rounded-full font-bold">ลบ</button></div>`).openOn(map);
+                    L.popup().setLatLng([s.lat, s.lng]).setContent(`<div class="p-1 text-center"><p class="text-sm font-bold mb-2">ลบพิกัดนี้?</p><button onclick="deleteStation('${s.id}')" class="bg-red-500 text-white text-[10px] px-4 py-1.5 rounded-full font-bold">ลบ</button></div>`).openOn(map);
                 });
             });
             lucide.createIcons();
@@ -446,19 +446,19 @@
             }
 
             document.getElementById('history-list').innerHTML = records.map(r => `
-                <div class="bg-white/60 border border-slate-100 p-6 rounded-[2rem] flex justify-between items-center group shadow-sm">
+                <div class="bg-white/60 border border-slate-100 p-3.5 rounded-2xl flex justify-between items-center group shadow-sm">
                     <div>
-                        <div class="flex items-center gap-3 mb-1">
-                            <span class="text-3xl font-bold text-slate-800">${r.odo.toLocaleString()}</span>
-                            <span class="text-[15px] font-bold text-slate-400">กม.</span>
+                        <div class="flex items-center gap-1.5 mb-0.5">
+                            <span class="text-xl font-bold text-slate-800">${r.odo.toLocaleString()}</span>
+                            <span class="text-[11px] font-bold text-slate-400">กม.</span>
                         </div>
-                        <p class="text-[15px] text-slate-400 font-bold uppercase tracking-wider">
+                        <p class="text-[11px] text-slate-400 font-bold uppercase tracking-wider">
                             ${new Date(r.timestamp).toLocaleDateString('th-TH')} • ${r.isFull ? '<span class="text-blue-600">เต็มถัง</span>' : r.litersFilled.toFixed(2) + ' ลิตร'}
                         </p>
                     </div>
-                    <div class="flex items-center gap-6">
-                        <span class="text-4xl font-black text-emerald-600">${r.cost} ฿</span>
-                        <button onclick="deleteRecord('${r.id}')" class="text-red-300 opacity-0 group-hover:opacity-100 transition-opacity"><i data-lucide="trash-2" class="w-8 h-8"></i></button>
+                    <div class="flex items-center gap-4">
+                        <span class="text-2xl font-black text-emerald-600">${r.cost} ฿</span>
+                        <button onclick="deleteRecord('${r.id}')" class="text-red-300 opacity-0 group-hover:opacity-100 transition-opacity"><i data-lucide="trash-2" class="w-5 h-5"></i></button>
                     </div>
                 </div>
             `).join('');
