@@ -24,6 +24,8 @@
         #map { 
             position: absolute; top: 0; left: 0; right: 0; bottom: 0; 
             z-index: 1; background: #cbd5e1;
+            height: 100% !important;
+            width: 100% !important;
         }
 
         .map-overlay { position: absolute; z-index: 1000; pointer-events: none; width: 100%; }
@@ -66,7 +68,7 @@
     <div id="map"></div>
     <div class="map-crosshair"><div class="crosshair-line-h"></div><div class="crosshair-line-v"></div><div class="crosshair-dot"></div></div>
 
-    <!-- ส่วนบน: Dashboard ความเร็ว และ เฉลี่ย (วงสีแดง) -->
+    <!-- ส่วนบน: Dashboard ความเร็ว และ เฉลี่ยสะสม -->
     <div class="map-overlay top-0 left-0 right-0 safe-top px-4 flex justify-between items-start pointer-events-none">
         <div class="flex gap-1.5">
             <div class="glass-ui interactable p-1.5 px-2.5 rounded-xl shadow-md border-l-4 border-blue-600">
@@ -122,7 +124,7 @@
                 <span class="text-[5px] font-bold text-slate-500 uppercase">ประวัติ</span>
             </button>
 
-            <!-- ส่วนที่ 2: ข้อมูลหลักกึ่งกลาง (เน้นตัวเลขใหญ่ชัดเจน) -->
+            <!-- ส่วนที่ 2: ข้อมูลหลักกึ่งกลาง -->
             <div class="flex items-center justify-center gap-4 flex-grow border-x border-slate-100 px-2">
                 <div class="flex flex-col items-center">
                     <span class="text-[6px] font-bold text-slate-400 uppercase tracking-tighter leading-none mb-1">ทริป GPS</span>
@@ -132,7 +134,6 @@
                     </div>
                 </div>
                 <div class="flex flex-col items-center">
-                    <!-- ส่วนสิ้นเปลืองด้านล่างที่จะเปลี่ยนตาม Metric ด้านบน -->
                     <span class="text-[6px] font-bold text-emerald-600 uppercase tracking-tighter leading-none mb-1" id="bottom-label">เฉลี่ย กม./ลิตร</span>
                     <div class="flex items-baseline gap-0.5">
                         <span class="text-xl font-black text-slate-900 leading-none" id="bottom-consumption-val">--</span>
@@ -199,10 +200,14 @@
         import { getFirestore, collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         let db, auth, currentUser;
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const app = initializeApp(firebaseConfig);
-        auth = getAuth(app);
-        db = getFirestore(app);
+        try {
+            if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+                const firebaseConfig = JSON.parse(__firebase_config);
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+            }
+        } catch(e) { console.warn("Firebase config is missing."); }
         
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'lpg-pro-cloud-v3';
 
@@ -211,27 +216,49 @@
         let map, userMarker, tripPoints = [];
         let currentPos = [13.7563, 100.5018];
         let tripDistance = parseFloat(localStorage.getItem('gps_trip_dist')) || 0;
+        let isFormOpen = false;
 
-        onAuthStateChanged(auth, (u) => {
-            currentUser = u;
-            if (currentUser) {
-                onSnapshot(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'refills'), (snap) => {
-                    const cloudRecords = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-                    if (cloudRecords.length > 0) {
-                        records = cloudRecords.sort((a,b) => b.timestamp - a.timestamp);
-                        localStorage.setItem('lpg_records', JSON.stringify(records));
-                        window.updateUI();
-                    }
-                });
-                onSnapshot(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), (snap) => {
-                    stations = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-                    localStorage.setItem('lpg_stations', JSON.stringify(stations));
-                    window.renderStations();
-                });
-            } else {
-                signInAnonymously(auth);
-            }
-        });
+        // --- AUTH & SYNC ---
+        if (auth && db) {
+            onAuthStateChanged(auth, (u) => {
+                currentUser = u;
+                if (currentUser) {
+                    onSnapshot(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'refills'), (snap) => {
+                        const cloudRecords = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                        if (cloudRecords.length > 0) {
+                            records = cloudRecords.sort((a,b) => b.timestamp - a.timestamp);
+                            localStorage.setItem('lpg_records', JSON.stringify(records));
+                            window.updateUI();
+                        }
+                    });
+                    onSnapshot(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), (snap) => {
+                        stations = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                        localStorage.setItem('lpg_stations', JSON.stringify(stations));
+                        window.renderStations();
+                    });
+                } else {
+                    signInAnonymously(auth).catch(e => console.error("Auth failed", e));
+                }
+            });
+        }
+
+        // --- MAP FUNCTIONS (FORCED RENDERING) ---
+        function initMap() {
+            if (map) return;
+            const mapContainer = document.getElementById('map');
+            if (!mapContainer) return setTimeout(initMap, 200);
+
+            try {
+                map = L.map('map', { zoomControl: false, attributionControl: false, rotate: true }).setView(currentPos, 16);
+                L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 }).addTo(map);
+                userMarker = L.marker(currentPos, { icon: L.divIcon({ className: 'car-marker', iconSize: [14, 18], iconAnchor: [7, 9] }) }).addTo(map);
+                
+                // สั่งวาดใหม่ซ้ำเพื่อกันจอเทา
+                const forceRefresh = () => map.invalidateSize();
+                forceRefresh();
+                [500, 1500, 3000, 5000].forEach(t => setTimeout(forceRefresh, t));
+            } catch(e) { console.error("Map init error", e); }
+        }
 
         window.locateMe = () => { if (map) map.flyTo(currentPos, 16, { duration: 1 }); };
 
@@ -255,8 +282,8 @@
                     }).addTo(map);
                     marker.on('click', (e) => {
                         const menu = document.createElement('div');
-                        menu.className = 'glass-ui interactable p-2 rounded-xl flex flex-col gap-1 shadow-2xl border-blue-100 min-w-[100px]';
-                        menu.innerHTML = `<button id="del-btn" class="text-[9px] font-bold text-red-500">ลบพิกัด</button>`;
+                        menu.className = 'glass-ui p-2 rounded-xl flex flex-col gap-1 shadow-2xl border-blue-100 min-w-[100px] interactable';
+                        menu.innerHTML = `<button id="del-btn" class="text-[9px] font-bold text-red-500 p-1">ลบพิกัด</button>`;
                         const popup = L.popup({ closeButton: false }).setLatLng(e.latlng).setContent(menu).openOn(map);
                         menu.querySelector('#del-btn').onclick = async () => {
                             stations = stations.filter(st => st.timestamp !== s.timestamp);
@@ -271,21 +298,25 @@
             lucide.createIcons();
         };
 
+        // --- UI & LOGIC (LOCAL-FIRST) ---
         window.toggleHistory = () => {
             const panel = document.getElementById('history-panel');
             panel.classList.toggle('open');
+            if (map) setTimeout(() => map.invalidateSize(), 350);
         };
         
         window.toggleForm = (editId = null) => {
             const panel = document.getElementById('form-panel');
-            if (editId) {
+            if (editId && typeof editId === 'string') {
                 const r = records.find(x => x.id === editId);
-                document.getElementById('form-title').innerText = "แก้ไขประวัติ";
-                document.getElementById('edit-id-store').value = editId;
-                document.getElementById('input-odometer').value = r.odo;
-                document.getElementById('input-amount').value = r.amt;
-                document.getElementById('input-price-per-liter').value = r.price;
-                document.getElementById('input-is-full').checked = r.isFull;
+                if (r) {
+                    document.getElementById('form-title').innerText = "แก้ไขประวัติ";
+                    document.getElementById('edit-id-store').value = editId;
+                    document.getElementById('input-odometer').value = r.odo;
+                    document.getElementById('input-amount').value = r.amt;
+                    document.getElementById('input-price-per-liter').value = r.price;
+                    document.getElementById('input-is-full').checked = r.isFull;
+                }
             } else {
                 document.getElementById('form-title').innerText = "บันทึกข้อมูลการเติม";
                 document.getElementById('edit-id-store').value = "";
@@ -304,22 +335,41 @@
             const price = parseFloat(document.getElementById('input-price-per-liter').value);
             const isFull = document.getElementById('input-is-full').checked;
             const editId = document.getElementById('edit-id-store').value;
-            if (isNaN(odo) || isNaN(amt) || isNaN(price)) return;
-            const center = map.getCenter();
+
+            if (isNaN(odo) || isNaN(amt) || isNaN(price)) {
+                return alert("กรุณากรอกข้อมูลให้ครบถ้วน");
+            }
+
+            const center = map ? map.getCenter() : { lat: currentPos[0], lng: currentPos[1] };
             const refillData = { odo, amt, price, isFull, lat: center.lat, lng: center.lng, timestamp: Date.now() };
+
+            // 1. บันทึก Local ทันที ป้องกันค้าง
             if (editId) {
                 const idx = records.findIndex(r => r.id === editId);
-                if (idx !== -1) { refillData.timestamp = records[idx].timestamp; records[idx] = { ...records[idx], ...refillData }; }
-            } else { refillData.id = 'local-' + Date.now(); records.unshift(refillData); }
-            localStorage.setItem('lpg_records', JSON.stringify(records));
-            window.updateUI(); window.toggleForm();
-            if (db && currentUser) {
-                if (editId && !editId.startsWith('local-')) await updateDoc(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'refills', editId), refillData);
-                else {
-                    const clean = {...refillData}; delete clean.id;
-                    await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'refills'), clean);
-                    await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), { lat: center.lat, lng: center.lng, timestamp: Date.now() });
+                if (idx !== -1) {
+                    refillData.timestamp = records[idx].timestamp;
+                    records[idx] = { ...records[idx], ...refillData };
                 }
+            } else {
+                refillData.id = 'temp-' + Date.now();
+                records.unshift(refillData);
+            }
+            
+            localStorage.setItem('lpg_records', JSON.stringify(records));
+            window.updateUI(); 
+            window.toggleForm();
+
+            // 2. พยายามส่ง Cloud เบื้องหลัง
+            if (db && currentUser) {
+                try {
+                    if (editId && !editId.startsWith('temp-')) {
+                        updateDoc(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'refills', editId), refillData);
+                    } else {
+                        const clean = {...refillData}; delete clean.id;
+                        addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'refills'), clean);
+                        addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), { lat: center.lat, lng: center.lng, timestamp: Date.now() });
+                    }
+                } catch (e) { console.warn("Cloud sync deferred."); }
             }
         };
 
@@ -329,17 +379,19 @@
             
             if (records.length === 0) {
                 container.innerHTML = '<div class="text-[8px] text-slate-400 text-center py-2">ไม่มีข้อมูล</div>';
+                document.getElementById('top-consumption-val').innerText = "--";
+                document.getElementById('bottom-consumption-val').innerText = "--";
                 return;
             }
 
-            container.innerHTML = records.slice(0, 8).map(r => `
-                <div onclick="window.toggleForm('${r.id}')" class="bg-white/80 p-2 rounded-xl mb-1 flex justify-between items-center shadow-sm">
+            container.innerHTML = records.slice(0, 10).map(r => `
+                <div onclick="window.toggleForm('${r.id}')" class="bg-white/80 p-2.5 rounded-xl mb-1 flex justify-between items-center shadow-sm active:bg-blue-50">
                     <div class="text-[10px] font-bold text-slate-800">${r.odo.toLocaleString()} กม. <span class="text-[7px] text-slate-400 font-normal">(${new Date(r.timestamp).toLocaleDateString('th-TH')})</span></div>
                     <div class="text-[10px] font-bold text-blue-600">${r.amt} ฿</div>
                 </div>
             `).join('');
 
-            // --- คำนวณค่าเฉลี่ยสะสม ---
+            // --- คำนวณสะสม ---
             const latest = records[0];
             const oldest = records[records.length - 1];
             let accKmL = 0, accBkm = 0;
@@ -347,52 +399,33 @@
             if (records.length >= 2) {
                 const totalDist = latest.odo - oldest.odo;
                 let totalLiters = 0, totalCost = 0;
-                
-                // รวมสะสมทิ้งหมด ยกเว้นครั้งแรกสุดที่เป็น baseline
                 for (let i = 0; i < records.length - 1; i++) {
                     totalLiters += (records[i].amt / records[i].price);
                     totalCost += records[i].amt;
                 }
-
-                if (totalDist > 0) {
+                if (totalDist > 0 && totalLiters > 0) {
                     accKmL = totalDist / totalLiters;
                     accBkm = totalCost / totalDist;
                 }
             }
 
-            // แสดงผลส่วนบน (Dashboard)
-            document.getElementById('top-consumption-val').innerText = (mode === 'kml') ? (accKmL > 0 ? accKmL.toFixed(1) : "--") : (accBkm > 0 ? accBkm.toFixed(2) : "--");
-            document.getElementById('top-consumption-unit').innerText = (mode === 'kml') ? "KM/L" : "฿/KM";
+            // Sync ส่วนบน & ส่วนล่าง
+            const val = (mode === 'kml') ? (accKmL > 0 ? accKmL.toFixed(1) : "--") : (accBkm > 0 ? accBkm.toFixed(2) : "--");
+            const unit = (mode === 'kml') ? "KM/L" : "฿/KM";
+            const label = (mode === 'kml') ? "เฉลี่ย กม./ลิตร" : "เฉลี่ย บาท/กม.";
 
-            // แสดงผลส่วนล่าง (Toolbar)
-            const bottomLabel = document.getElementById('bottom-label');
-            const bottomVal = document.getElementById('bottom-consumption-val');
-            const bottomUnit = document.getElementById('bottom-consumption-unit');
+            document.getElementById('top-consumption-val').innerText = val;
+            document.getElementById('top-consumption-unit').innerText = unit;
+            document.getElementById('bottom-consumption-val').innerText = val;
+            document.getElementById('bottom-consumption-unit').innerText = unit;
+            document.getElementById('bottom-label').innerText = label;
 
-            if (mode === 'kml') {
-                bottomLabel.innerText = "เฉลี่ย กม./ลิตร";
-                bottomVal.innerText = accKmL > 0 ? accKmL.toFixed(1) : "--";
-                bottomUnit.innerText = "KM/L";
-            } else {
-                bottomLabel.innerText = "เฉลี่ย บาท/กม.";
-                bottomVal.innerText = accBkm > 0 ? accBkm.toFixed(2) : "--";
-                bottomUnit.innerText = "฿/KM";
-            }
-
-            // แก๊สคงเหลือ
             let curLiters = latest.isFull ? 54 : (latest.amt / latest.price);
             document.getElementById('gas-remain').innerText = curLiters.toFixed(1);
             lucide.createIcons();
         };
 
         window.resetTrip = () => { tripDistance = 0; localStorage.setItem('gps_trip_dist', 0); window.updateUI(); };
-
-        function initMap() {
-            map = L.map('map', { zoomControl: false, attributionControl: false, rotate: true }).setView(currentPos, 16);
-            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 }).addTo(map);
-            userMarker = L.marker(currentPos, { icon: L.divIcon({ className: 'car-marker', iconSize: [14, 18], iconAnchor: [7, 9] }) }).addTo(map);
-            [500, 2000, 5000].forEach(t => setTimeout(() => map.invalidateSize(), t));
-        }
 
         function calculateDistance(lat1, lon1, lat2, lon2) {
             const R = 6371; const dLat = (lat2-lat1)*Math.PI/180; const dLon = (lon2-lon1)*Math.PI/180;
@@ -401,21 +434,28 @@
         }
 
         function startTracking() {
+            if (!navigator.geolocation) return;
             navigator.geolocation.watchPosition((pos) => {
                 const { latitude, longitude, speed, heading } = pos.coords;
                 if (tripPoints.length > 0) {
                     const last = tripPoints[tripPoints.length - 1];
                     const d = calculateDistance(last[0], last[1], latitude, longitude);
-                    if (d > 0.002) { tripDistance += d; localStorage.setItem('gps_trip_dist', tripDistance); }
+                    if (d > 0.002) { 
+                        tripDistance += d; 
+                        localStorage.setItem('gps_trip_dist', tripDistance); 
+                    }
                 }
                 tripPoints.push([latitude, longitude]); if (tripPoints.length > 5) tripPoints.shift();
                 currentPos = [latitude, longitude];
                 document.getElementById('current-speed').innerText = speed > 0 ? Math.round(speed * 3.6) : 0;
                 document.getElementById('gps-trip-dist').innerText = tripDistance.toFixed(2);
                 if (userMarker) userMarker.setLatLng(currentPos);
-                if (!isFormOpen && map && speed > 2) { map.setBearing(heading || 0); map.panTo(currentPos); }
+                if (!isFormOpen && map && speed > 2) { 
+                    map.setBearing(heading || 0); 
+                    map.panTo(currentPos); 
+                }
                 window.updateUI();
-            }, null, { enableHighAccuracy: true });
+            }, (err) => console.warn("GPS Access Denied"), { enableHighAccuracy: true });
         }
 
         window.addEventListener('load', () => {
