@@ -38,8 +38,15 @@
         .car-marker { width: 0; height: 0; border-left: 10px solid transparent; border-right: 10px solid transparent; border-bottom: 25px solid #3b82f6; filter: drop-shadow(0 0 5px rgba(59, 130, 246, 0.8)); }
         
         .no-scrollbar::-webkit-scrollbar { display: none; }
-        .safe-bottom { padding-bottom: calc(1rem + env(safe-area-inset-bottom)); }
+        .safe-bottom { padding-bottom: calc(0.5rem + env(safe-area-inset-bottom)); }
+        .safe-top { padding-top: calc(0.75rem + env(safe-area-inset-top)); }
+        
         .pump-marker { background: #ef4444; border: 2px solid white; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; box-shadow: 0 2px 10px rgba(0,0,0,0.2); }
+        
+        /* แอนิเมชันสำหรับประวัติพับเก็บ */
+        #history-container { transition: max-height 0.3s ease-out; overflow-y: auto; }
+        .history-collapsed { max-height: 0 !important; padding-top: 0 !important; padding-bottom: 0 !important; margin-top: 0 !important; overflow: hidden; }
+        .history-expanded { max-height: 250px; }
     </style>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -50,25 +57,25 @@
 
     <div id="map"></div>
 
-    <!-- ส่วนบน: Dashboard สถิติ -->
-    <div class="map-overlay top-0 p-4 space-y-3">
+    <!-- ส่วนบน: Dashboard สถิติ (ปรับลดตำแหน่งลงมาเล็กน้อยและทำให้เล็กลง) -->
+    <div class="map-overlay top-0 left-0 right-0 safe-top px-4">
         <div class="flex gap-2">
-            <div class="glass-ui interactable p-3 rounded-2xl border-l-4 border-blue-600 flex-1 shadow-md">
-                <span class="text-[9px] font-bold text-blue-600 uppercase block tracking-tighter">ความเร็วปัจจุบัน</span>
+            <div class="glass-ui interactable p-2.5 rounded-xl border-l-4 border-blue-600 flex-1 shadow-md">
+                <span class="text-[8px] font-bold text-blue-600 uppercase block tracking-tighter">ความเร็ว</span>
                 <div class="flex items-baseline gap-1">
-                    <span class="text-3xl font-black text-slate-800" id="current-speed">0</span>
-                    <span class="text-[10px] text-slate-400 uppercase font-bold">km/h</span>
+                    <span class="text-2xl font-black text-slate-800" id="current-speed">0</span>
+                    <span class="text-[9px] text-slate-400 uppercase font-bold">km/h</span>
                 </div>
             </div>
-            <div class="glass-ui interactable p-3 rounded-2xl border-l-4 border-emerald-600 flex-1 shadow-md">
+            <div class="glass-ui interactable p-2.5 rounded-xl border-l-4 border-emerald-600 flex-1 shadow-md">
                 <div class="flex justify-between items-start">
-                    <span class="text-[9px] font-bold text-emerald-600 uppercase block tracking-tighter">ความสิ้นเปลือง</span>
-                    <select id="metric-mode" onchange="window.updateUI()" class="text-[9px] bg-slate-100 rounded px-1 outline-none">
+                    <span class="text-[8px] font-bold text-emerald-600 uppercase block tracking-tighter">สิ้นเปลือง</span>
+                    <select id="metric-mode" onchange="window.updateUI()" class="text-[8px] bg-slate-100 rounded px-1 outline-none">
                         <option value="kml">กม./ลิตร</option>
                         <option value="bkm">บาท/กม.</option>
                     </select>
                 </div>
-                <div class="flex items-baseline gap-1 mt-1">
+                <div class="flex items-baseline gap-1 mt-0.5">
                     <span class="text-2xl font-black text-slate-800" id="consumption-val">--</span>
                     <span class="text-[8px] text-slate-400 uppercase" id="consumption-unit">KM/L</span>
                 </div>
@@ -76,49 +83,69 @@
         </div>
     </div>
 
-    <!-- ส่วนกลาง: ทริปมิเตอร์และประวัติล่าสุด -->
-    <div class="map-overlay bottom-[130px] px-4 space-y-2">
-        <div class="glass-ui interactable rounded-2xl p-3 shadow-lg flex justify-between items-center border-b-2 border-blue-500">
-            <div class="flex-1">
-                <span class="text-[9px] font-bold text-slate-500 uppercase tracking-widest">ทริป GPS (กม.)</span>
-                <div class="text-xl font-black text-blue-700" id="gps-trip-dist">0.00</div>
+    <!-- ส่วนกลาง: ทริปมิเตอร์และประวัติล่าสุด (ทำให้เล็กลงและพับเก็บได้) -->
+    <div class="map-overlay bottom-[110px] px-4 space-y-2">
+        <!-- Trip Meter (Compact) -->
+        <div class="glass-ui interactable rounded-xl p-2.5 shadow-lg flex justify-between items-center border-b border-blue-200">
+            <div class="flex gap-3 items-center">
+                <div class="p-1.5 bg-blue-50 rounded-lg">
+                    <i data-lucide="navigation" class="w-4 h-4 text-blue-600"></i>
+                </div>
+                <div>
+                    <span class="text-[8px] font-bold text-slate-400 uppercase tracking-widest block">ทริป GPS</span>
+                    <div class="flex items-baseline gap-1">
+                        <span class="text-lg font-black text-blue-700" id="gps-trip-dist">0.00</span>
+                        <span class="text-[9px] text-slate-400 font-bold uppercase">km</span>
+                    </div>
+                </div>
             </div>
             <div class="flex gap-2">
-                <button onclick="window.resetTrip()" class="bg-blue-50 p-2 rounded-xl text-blue-600 active:bg-blue-100 border border-blue-100">
-                    <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+                <button onclick="window.resetTrip()" class="bg-blue-50 p-2 rounded-lg text-blue-600 active:scale-90 transition-all border border-blue-100">
+                    <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
                 </button>
-                <button onclick="window.exportToCSV()" class="bg-slate-100 p-2 rounded-xl text-slate-600 border border-slate-200">
-                    <i data-lucide="download" class="w-4 h-4"></i>
+                <button onclick="window.exportToCSV()" class="bg-slate-50 p-2 rounded-lg text-slate-500 active:scale-90 transition-all border border-slate-200">
+                    <i data-lucide="download" class="w-3.5 h-3.5"></i>
                 </button>
             </div>
         </div>
-        <div id="history-panel" class="glass-ui interactable rounded-2xl p-3 shadow-xl max-h-[160px] overflow-y-auto no-scrollbar">
-            <div class="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-2 flex justify-between sticky top-0 bg-white/90 py-1">
-                <span>ประวัติการเติม</span>
-                <span id="record-count" class="text-blue-600">--</span>
+
+        <!-- History Accordion -->
+        <div id="history-panel" class="glass-ui interactable rounded-xl shadow-xl overflow-hidden">
+            <!-- Header for toggle -->
+            <button onclick="window.toggleHistory()" class="w-full p-2.5 flex justify-between items-center bg-white/50 border-b border-slate-100">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="history" class="w-3.5 h-3.5 text-slate-400"></i>
+                    <span class="text-[9px] font-bold text-slate-500 uppercase tracking-widest">ประวัติการเติม</span>
+                    <span id="record-count" class="bg-blue-100 text-blue-700 text-[8px] px-1.5 rounded-full font-bold ml-1">--</span>
+                </div>
+                <i id="history-chevron" data-lucide="chevron-up" class="w-4 h-4 text-slate-400 transition-transform"></i>
+            </button>
+            
+            <!-- List Content -->
+            <div id="history-container" class="history-collapsed space-y-2 px-2.5 no-scrollbar">
+                <!-- รายการประวัติจะถูกใส่ที่นี่ -->
             </div>
-            <div id="history-container" class="space-y-4"></div>
         </div>
     </div>
 
     <!-- ส่วนล่าง: ปุ่ม Pin และปุ่มเติมแก๊ส -->
-    <div class="map-overlay bottom-0 p-6 flex justify-between items-center safe-bottom">
-        <button onclick="window.saveCurrentLocationManual()" class="interactable bg-white text-blue-600 p-4 rounded-full shadow-2xl border border-blue-50 active:scale-90 transition-transform">
-            <i data-lucide="map-pin" class="w-6 h-6"></i>
+    <div class="map-overlay bottom-0 p-5 flex justify-between items-center safe-bottom">
+        <button onclick="window.saveCurrentLocationManual()" class="interactable bg-white text-blue-600 p-3.5 rounded-full shadow-2xl border border-blue-50 active:scale-90 transition-transform">
+            <i data-lucide="map-pin" class="w-5 h-5"></i>
         </button>
-        <div class="glass-ui p-2 rounded-3xl flex gap-2 items-center shadow-2xl interactable border border-blue-100">
+        <div class="glass-ui p-1.5 rounded-2xl flex gap-2 items-center shadow-2xl interactable border border-blue-100">
             <div class="text-center px-2">
-                <div class="text-[8px] text-slate-400 font-bold uppercase">แก๊สในถัง</div>
+                <div class="text-[7px] text-slate-400 font-bold uppercase">แก๊สในถัง</div>
                 <div class="text-sm font-bold text-blue-600" id="gas-remain">0.0</div>
             </div>
-            <button onclick="window.toggleForm()" class="bg-emerald-600 text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-2 shadow-lg active:scale-95 transition-transform">
-                <i data-lucide="plus" class="w-5 h-5"></i> บันทึกเติม
+            <button onclick="window.toggleForm()" class="bg-emerald-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 shadow-lg active:scale-95 transition-transform">
+                <i data-lucide="plus" class="w-4 h-4"></i> บันทึกเติม
             </button>
         </div>
     </div>
 
     <!-- ฟอร์มกรอกข้อมูล (Slide Up) -->
-    <div id="form-panel" class="fixed inset-x-0 bottom-0 z-[2001] bg-white translate-y-full transition-transform duration-500 rounded-t-[3rem] p-8 border-t border-slate-200 shadow-2xl interactable safe-bottom">
+    <div id="form-panel" class="fixed inset-x-0 bottom-0 z-[2001] bg-white translate-y-full transition-transform duration-500 rounded-t-[2.5rem] p-8 border-t border-slate-200 shadow-2xl interactable safe-bottom">
         <div class="w-12 h-1 bg-slate-200 rounded-full mx-auto mb-6" onclick="window.toggleForm()"></div>
         <div class="flex justify-between items-center mb-6">
             <h3 class="text-xl font-bold text-slate-800 flex items-center gap-2">
@@ -159,7 +186,6 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, onSnapshot, doc, addDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // ระบบป้องกันความผิดพลาดของ Firebase Config
         let db, auth, currentUser;
         try {
             if (typeof __firebase_config !== 'undefined' && __firebase_config) {
@@ -172,16 +198,15 @@
         
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'lpg-pro-cloud-v1';
 
-        // สถานะข้อมูล (Local Storage)
         let records = JSON.parse(localStorage.getItem('lpg_records') || '[]');
         let stations = JSON.parse(localStorage.getItem('lpg_stations') || '[]');
         let map, userMarker, tripPoints = [];
         let currentPos = [13.7563, 100.5018];
         let currentHeading = 0;
         let isFormOpen = false;
+        let isHistoryOpen = false;
         let tripDistance = parseFloat(localStorage.getItem('gps_trip_dist')) || 0;
 
-        // เริ่มต้น Auth และ Sync ข้อมูล
         if (auth && db) {
             onAuthStateChanged(auth, (u) => {
                 currentUser = u;
@@ -216,6 +241,22 @@
         }
 
         // --- GLOBAL FUNCTIONS ---
+
+        window.toggleHistory = () => {
+            isHistoryOpen = !isHistoryOpen;
+            const container = document.getElementById('history-container');
+            const chevron = document.getElementById('history-chevron');
+            
+            if (isHistoryOpen) {
+                container.classList.remove('history-collapsed');
+                container.classList.add('history-expanded', 'py-3', 'mt-1');
+                chevron.style.transform = 'rotate(180deg)';
+            } else {
+                container.classList.add('history-collapsed');
+                container.classList.remove('history-expanded', 'py-3', 'mt-1');
+                chevron.style.transform = 'rotate(0deg)';
+            }
+        };
         
         window.toggleForm = (editId = null) => {
             const panel = document.getElementById('form-panel');
@@ -234,7 +275,6 @@
                     document.getElementById('input-liters').value = (r.amt / r.price).toFixed(2);
                 }
             } else if (!isFormOpen) {
-                // รีเซ็ตฟอร์มสำหรับรายการใหม่
                 document.getElementById('form-title').innerText = "บันทึกการเติมแก๊ส";
                 submitBtn.innerText = "ตกลง";
                 document.getElementById('edit-id-store').value = "";
@@ -266,49 +306,28 @@
             btn.innerText = "กำลังประมวลผล...";
 
             try {
-                // ข้อมูลใหม่/แก้ไข
-                const refillData = {
-                    odo, amt, price, isFull,
-                    lat: currentPos[0],
-                    lng: currentPos[1]
-                };
+                const refillData = { odo, amt, price, isFull, lat: currentPos[0], lng: currentPos[1] };
 
                 if (editId) {
-                    // --- กรณีแก้ไข (Overwrite) ---
                     const idx = records.findIndex(r => r.id === editId);
                     if (idx !== -1) {
-                        // รักษา timestamp เดิมเพื่อไม่ให้ลำดับสลับที่
                         const originalTimestamp = records[idx].timestamp;
                         const updatedRecord = { ...records[idx], ...refillData, timestamp: originalTimestamp };
-                        
-                        // อัปเดตข้อมูลในเครื่องทันที
                         records[idx] = updatedRecord;
                         localStorage.setItem('lpg_records', JSON.stringify(records));
-                        
-                        // อัปเดตบน Cloud ถ้าเป็นไปได้
                         if (db && currentUser && !editId.startsWith('local-')) {
                             await updateDoc(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'refills', editId), refillData);
                         }
                     }
                 } else {
-                    // --- กรณีสร้างใหม่ ---
-                    const newRecord = { 
-                        id: 'local-' + Date.now(), 
-                        ...refillData, 
-                        timestamp: Date.now() 
-                    };
+                    const newRecord = { id: 'local-' + Date.now(), ...refillData, timestamp: Date.now() };
                     records.unshift(newRecord);
                     localStorage.setItem('lpg_records', JSON.stringify(records));
-
                     if (db && currentUser) {
                         await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'refills'), refillData);
-                        await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), { 
-                            lat: currentPos[0], lng: currentPos[1], timestamp: Date.now() 
-                        });
+                        await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), { lat: currentPos[0], lng: currentPos[1], timestamp: Date.now() });
                     }
                 }
-
-                // อัปเดตหน้าจอและปิดฟอร์ม
                 window.updateUI();
                 window.toggleForm();
             } catch (e) {
@@ -325,12 +344,11 @@
             const countLabel = document.getElementById('record-count');
             
             if (records.length === 0) {
-                container.innerHTML = '<div class="text-[10px] text-slate-400 text-center py-4">ไม่มีประวัติการเติม</div>';
-                countLabel.innerText = "0 รายการ";
+                container.innerHTML = '<div class="text-[9px] text-slate-400 text-center py-2">ไม่มีประวัติ</div>';
+                countLabel.innerText = "0";
                 return;
             }
 
-            // จัดกลุ่มตามวัน
             const groups = records.reduce((acc, r) => {
                 const date = new Date(r.timestamp).toLocaleDateString('th-TH', { day:'numeric', month:'short' });
                 if (!acc[date]) acc[date] = [];
@@ -340,21 +358,21 @@
 
             container.innerHTML = Object.entries(groups).map(([date, items]) => `
                 <div class="space-y-1">
-                    <div class="text-[8px] font-bold text-slate-400 uppercase pl-1">${date}</div>
+                    <div class="text-[7px] font-bold text-slate-400 uppercase pl-1">${date}</div>
                     ${items.map(r => `
-                        <div onclick="window.toggleForm('${r.id}')" class="bg-white p-3 rounded-xl border border-slate-100 flex justify-between items-center shadow-sm active:bg-blue-50 transition-all cursor-pointer">
+                        <div onclick="window.toggleForm('${r.id}')" class="bg-white/70 p-2 rounded-lg border border-slate-100 flex justify-between items-center shadow-sm active:bg-blue-50 transition-all cursor-pointer">
                             <div class="flex-1">
-                                <div class="text-[11px] font-bold text-slate-800">${r.odo.toLocaleString()} กม.</div>
-                                <div class="text-[8px] text-slate-400 font-medium">
+                                <div class="text-[10px] font-bold text-slate-800">${r.odo.toLocaleString()} กม.</div>
+                                <div class="text-[7px] text-slate-400 font-medium">
                                     ${r.isFull ? '<span class="text-emerald-600 font-bold">เต็มถัง</span>' : 'เติมเพิ่ม'} • ${new Date(r.timestamp).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})}
                                 </div>
                             </div>
-                            <div class="text-right flex items-center gap-3">
+                            <div class="text-right flex items-center gap-2">
                                 <div>
-                                    <div class="text-[11px] font-bold text-blue-600">${r.amt} ฿</div>
-                                    <div class="text-[8px] text-slate-400 font-bold">${(r.amt/r.price).toFixed(2)} ลิตร</div>
+                                    <div class="text-[10px] font-bold text-blue-600">${r.amt} ฿</div>
+                                    <div class="text-[7px] text-slate-400 font-bold">${(r.amt/r.price).toFixed(2)} ลิตร</div>
                                 </div>
-                                <i data-lucide="edit-3" class="w-3.5 h-3.5 text-slate-300"></i>
+                                <i data-lucide="edit-3" class="w-3 h-3 text-slate-300"></i>
                             </div>
                         </div>
                     `).join('')}
@@ -369,17 +387,15 @@
                 const kmL = trip / (latest.amt / latest.price);
                 const bkm = latest.amt / trip;
                 const mode = document.getElementById('metric-mode').value;
-                
                 document.getElementById('consumption-val').innerText = isFinite(kmL) && kmL > 0 ? (mode === 'kml' ? kmL.toFixed(1) : bkm.toFixed(2)) : "--";
                 document.getElementById('consumption-unit').innerText = mode === 'kml' ? "KM/L" : "฿/KM";
             }
-            
-            countLabel.innerText = `${records.length} รายการ`;
+            countLabel.innerText = records.length;
             if (window.lucide) lucide.createIcons();
         };
 
         window.exportToCSV = () => {
-            if (records.length === 0) return alert("ไม่มีข้อมูลให้ส่งออก");
+            if (records.length === 0) return alert("ไม่มีข้อมูล");
             let csv = "วันที่,เวลา,เลขไมล์,จำนวนเงิน,ราคาต่อลิตร,จำนวนลิตร,เต็มถัง\n";
             records.forEach(r => {
                 const date = new Date(r.timestamp);
@@ -405,11 +421,10 @@
             const newStation = { lat: currentPos[0], lng: currentPos[1], timestamp: Date.now() };
             stations.push(newStation);
             localStorage.setItem('lpg_stations', JSON.stringify(stations));
-            
             if (db && currentUser) {
                 try {
                     await addDoc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'stations'), newStation);
-                } catch (e) { console.error("Cloud Pin Failed:", e); }
+                } catch (e) {}
             }
             window.renderStations();
             alert("บันทึกพิกัดปั๊มแล้ว");
@@ -428,21 +443,14 @@
             if (window.lucide) lucide.createIcons();
         };
 
-        // --- MAP & TRACKING ---
-        
         function initMap() {
             if (map) return;
-            const mapEl = document.getElementById('map');
-            if (!mapEl) return;
-
             map = L.map('map', { zoomControl: false, attributionControl: false, rotate: true }).setView(currentPos, 16);
             L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 }).addTo(map);
             userMarker = L.marker(currentPos, { 
                 icon: L.divIcon({ className: 'car-marker', iconSize: [20, 25], iconAnchor: [10, 12] }) 
             }).addTo(map);
-
             setTimeout(() => map.invalidateSize(), 500);
-            setTimeout(() => map.invalidateSize(), 2000);
         }
 
         function calculateDistance(lat1, lon1, lat2, lon2) {
@@ -474,21 +482,17 @@
                 }
                 tripPoints.push([latitude, longitude]);
                 if (tripPoints.length > 10) tripPoints.shift();
-                
                 document.getElementById('current-speed').innerText = speed > 0 ? Math.round(speed * 3.6) : 0;
                 if (heading !== null) currentHeading = heading;
                 currentPos = [latitude, longitude];
                 if (userMarker) userMarker.setLatLng(currentPos);
-                
                 if (!isFormOpen && map) {
                     map.setBearing(currentHeading);
                     const offsetPos = getOffsetCenter(latitude, longitude, currentHeading, 0.15);
                     map.panTo(offsetPos, { animate: true });
                 }
                 window.updateUI();
-            }, (err) => {
-                if (!map) initMap();
-            }, { enableHighAccuracy: true });
+            }, (err) => { if (!map) initMap(); }, { enableHighAccuracy: true });
         }
 
         window.addEventListener('load', () => {
@@ -496,18 +500,14 @@
             initMap();
             startTracking();
             window.updateUI();
-            
             const amtIn = document.getElementById('input-amount');
             const prcIn = document.getElementById('input-price-per-liter');
             const ltrOut = document.getElementById('input-liters');
-            
             const calc = () => {
-                const a = parseFloat(amtIn.value);
-                const p = parseFloat(prcIn.value);
+                const a = parseFloat(amtIn.value); const p = parseFloat(prcIn.value);
                 ltrOut.value = (a && p) ? (a / p).toFixed(2) : '0.00';
             };
-            amtIn.addEventListener('input', calc);
-            prcIn.addEventListener('input', calc);
+            amtIn.addEventListener('input', calc); prcIn.addEventListener('input', calc);
         });
     </script>
 </body>
