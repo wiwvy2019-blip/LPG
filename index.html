@@ -1,7 +1,7 @@
-DOCTYPE html>
+<!DOCTYPE html>
 <html lang="th">
 <head>
-  <base ="_top">
+  <base target="_top">
   <meta charset="utf-8">
   <title>Pipe-JS Pro | Professional Engineering Solver</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
@@ -11,6 +11,10 @@ DOCTYPE html>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js"></script>
+  <!-- Chart.js for EPS Graphs -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Marked.js for AI Markdown Formatting -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     :root {
       --primary: #2563eb;
@@ -49,7 +53,7 @@ DOCTYPE html>
     .tool-card .tc-label { font-size:9.5px;font-weight:700;color:#475569;text-align:center;line-height:1.3;font-family:var(--sans); }
 
     /* ── PROP PANEL ── */
-    .prop-panel { position:fixed;bottom:20px;left:50%;transform:translateX(-50%);width:92%;max-width:480px;background:white;border-radius:24px;padding:22px;box-shadow:0 -8px 40px rgba(0,0,0,0.18);border:1px solid #f1f5f9;z-index:2100;max-height:80vh;display:flex;flex-direction:column; }
+    .prop-panel { position:fixed;bottom:90px;left:50%;transform:translateX(-50%);width:92%;max-width:480px;background:white;border-radius:24px;padding:22px;box-shadow:0 -8px 40px rgba(0,0,0,0.18);border:1px solid #f1f5f9;z-index:2100;max-height:80vh;display:flex;flex-direction:column; }
     .eng-input { width:100%;padding:11px 14px;border:1.5px solid #e2e8f0;border-radius:12px;font-size:13px;font-weight:600;outline:none;transition:0.2s;box-sizing:border-box;font-family:var(--sans);color:#0f172a; }
     .eng-input:focus { border-color:var(--primary);background:#f0f7ff;box-shadow:0 0 0 3px rgba(37,99,235,0.08); }
     .panel-res-box { background:#f8fafc;border-radius:14px;padding:14px;margin-bottom:14px;border:1px solid #e2e8f0; }
@@ -68,7 +72,7 @@ DOCTYPE html>
     .sys-divider { height:1px;background:rgba(255,255,255,0.06); }
 
     /* ── WARN PANEL ── */
-    .warn-panel { position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:rgba(239,68,68,0.95);backdrop-filter:blur(10px);color:white;border-radius:16px;padding:10px 18px;font-size:11px;font-weight:700;z-index:3500;display:none;gap:8px;align-items:center;max-width:92%;box-shadow:0 4px 20px rgba(239,68,68,0.4); }
+    .warn-panel { position:fixed;top:16px;left:50%;transform:translateX(-50%);background:rgba(239,68,68,0.95);backdrop-filter:blur(10px);color:white;border-radius:16px;padding:10px 18px;font-size:11px;font-weight:700;z-index:3500;display:none;gap:8px;align-items:center;max-width:92%;box-shadow:0 4px 20px rgba(239,68,68,0.4); }
     .warn-panel.show { display:flex; }
 
     /* ── TOOLTIPS ── */
@@ -83,7 +87,7 @@ DOCTYPE html>
     .ctx-menu-item:hover { background:#f1f5f9; }
 
     /* ── STATUS BAR ── */
-    #st-msg { position:fixed;bottom:16px;right:16px;background:rgba(15,23,42,0.88);backdrop-filter:blur(8px);color:white;padding:7px 16px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:0.08em;z-index:3000;font-family:var(--mono);border:1px solid rgba(255,255,255,0.07); }
+    #st-msg { position:fixed;top:16px;right:16px;background:rgba(15,23,42,0.88);backdrop-filter:blur(8px);color:white;padding:7px 16px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:0.08em;z-index:3000;font-family:var(--mono);border:1px solid rgba(255,255,255,0.07); }
 
     /* ── SECTION LABEL ── */
     .sec-label { font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.13em;margin-bottom:10px; }
@@ -127,6 +131,41 @@ DOCTYPE html>
     /* ── LEGEND PIPE SPEED ── */
     .legend-row { display:flex;align-items:center;gap:8px;font-size:10.5px;font-weight:600;color:#475569; }
     .legend-pip { width:28px;height:5px;border-radius:3px; }
+
+    /* ── ADVISOR MODAL & HIGHLIGHT ── */
+    .advisor-card { border:1px solid #e2e8f0;border-left:4px solid #f59e0b;border-radius:12px;padding:12px;margin-bottom:10px;background:#f8fafc;display:flex;flex-direction:column;gap:8px; }
+    .advisor-card.crit { border-left-color:#ef4444;background:#fef2f2; }
+    .advisor-card.info { border-left-color:#3b82f6;background:#eff6ff; }
+    .adv-hdr { display:flex;justify-content:space-between;align-items:flex-start; }
+    .adv-title { font-size:11px;font-weight:800;color:#0f172a;font-family:var(--sans); }
+    .adv-desc { font-size:10px;color:#475569;line-height:1.5;font-family:var(--sans); }
+    .adv-actions { display:flex;gap:6px;margin-top:4px; }
+    .btn-adv { padding:6px 12px;border-radius:8px;font-size:9.5px;font-weight:800;cursor:pointer;display:flex;align-items:center;gap:4px;font-family:var(--sans);border:none; }
+    .btn-adv-locate { background:white;border:1px solid #cbd5e1;color:#475569; }
+    .btn-adv-locate:hover { background:#f1f5f9; }
+    .btn-adv-fix { background:#10b981;color:white; }
+    .btn-adv-fix:hover { background:#059669; }
+    
+    @keyframes item-highlight { 0%{filter:drop-shadow(0 0 0px #f59e0b) brightness(1);} 50%{filter:drop-shadow(0 0 15px #f59e0b) brightness(1.5);} 100%{filter:drop-shadow(0 0 0px #f59e0b) brightness(1);} }
+    .map-item-highlight { animation: item-highlight 0.8s infinite !important; stroke:#f59e0b !important; stroke-width:8px !important; z-index:9999 !important; }
+
+    /* ── NEW: EPS ADDITIONS ── */
+    .eps-panel { position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:800px;background:rgba(255,255,255,0.95);backdrop-filter:blur(16px);border:1px solid #e2e8f0;border-bottom:none;border-radius:24px 24px 0 0;padding:14px 24px;box-shadow:0 -8px 40px rgba(0,0,0,0.15);z-index:1500;display:none;align-items:center;gap:16px;box-sizing:border-box; }
+    .eps-panel.show { display:flex; }
+    .eps-slider { flex:1; appearance:none; height:8px; background:#e2e8f0; border-radius:4px; outline:none; }
+    .eps-slider::-webkit-slider-thumb { appearance:none; width:22px; height:22px; border-radius:50%; background:var(--primary); cursor:pointer; box-shadow:0 2px 6px rgba(37,99,235,0.4); border:3px solid white; transition:0.1s; }
+    .eps-slider::-webkit-slider-thumb:hover { transform:scale(1.2); }
+    .eps-time-lbl { font-family:var(--mono); font-size:14px; font-weight:800; color:var(--dark); min-width:60px; text-align:center; background:#f1f5f9; padding:4px 10px; border-radius:8px; border:1px solid #cbd5e1; }
+    .chart-box { background:white; border:1px solid #e2e8f0; border-radius:12px; padding:10px; margin-top:10px; height:180px; width:100%; box-sizing:border-box;}
+
+    /* ── AI MARKDOWN STYLES ── */
+    .ai-markdown h1, .ai-markdown h2, .ai-markdown h3 { color: #0f172a; margin-top: 1.2em; margin-bottom: 0.5em; font-weight: 800; font-family: var(--sans); }
+    .ai-markdown h3 { font-size: 14px; color: #6d28d9; }
+    .ai-markdown p { margin-bottom: 1em; }
+    .ai-markdown ul, .ai-markdown ol { padding-left: 20px; margin-bottom: 1em; }
+    .ai-markdown li { margin-bottom: 0.4em; }
+    .ai-markdown strong { color: #4c1d95; }
+    .ai-markdown code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-family: var(--mono); font-size: 0.9em; color: #0f172a; }
   </style>
 </head>
 <body>
@@ -143,6 +182,7 @@ DOCTYPE html>
     <button class="float-btn" id="btn-undo" onclick="undo()" title="ย้อนกลับ"><i class="fas fa-undo"></i></button>
     <button class="float-btn" id="btn-redo" onclick="redo()" title="ทำซ้ำ"><i class="fas fa-redo"></i></button>
     <div style="width:1px;height:28px;background:#e2e8f0;margin:0 2px;"></div>
+    <button class="float-btn" onclick="openAdvisor()" title="ผู้ช่วยวิเคราะห์ระบบ"><i class="fas fa-lightbulb" style="color:#f59e0b;"></i><span style="color:#d97706;">แนะนำ</span></button>
     <button class="float-btn" onclick="openReport()" title="รายงาน"><i class="fas fa-table-list"></i><span>รายงาน</span></button>
     <button class="float-btn" onclick="forceMapFix()"><i class="fas fa-sync-alt"></i></button>
     <button class="float-btn" onclick="locate()"><i class="fas fa-crosshairs"></i></button>
@@ -151,7 +191,7 @@ DOCTYPE html>
 
   <!-- SYSTEM SUMMARY -->
   <div id="sysSummary" class="system-summary">
-    <div class="sys-hdr">⚡ System Status</div>
+    <div class="sys-hdr" id="sysHdrTitle">⚡ System Status</div>
     <div class="sys-row"><span class="sys-label">🔵 Supply รวม</span><span class="sys-val" style="color:#60a5fa;" id="val-supply">—</span></div>
     <div class="sys-row"><span class="sys-label">🔴 Demand รวม</span><span class="sys-val" style="color:#f87171;" id="val-demand">—</span></div>
     <div class="sys-divider"></div>
@@ -162,6 +202,14 @@ DOCTYPE html>
     <div class="sys-row"><span class="sys-label">🔢 Nodes / Pipes</span><span class="sys-val" style="color:rgba(255,255,255,0.7);" id="val-count">—</span></div>
     <div class="sys-row"><span class="sys-label">🔄 Iterations</span><span class="sys-val" style="color:rgba(255,255,255,0.7);" id="val-iters">—</span></div>
     <div class="sys-row"><span class="sys-label">✅ Converged</span><span class="sys-val" id="val-conv">—</span></div>
+  </div>
+
+  <!-- EPS TIMELINE PANEL (NEW) -->
+  <div id="epsPanel" class="eps-panel">
+    <button onclick="playEPS()" id="btn-play" style="background:var(--primary);color:white;border:none;width:36px;height:36px;border-radius:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 10px rgba(37,99,235,0.3);"><i class="fas fa-play"></i></button>
+    <div class="eps-time-lbl" id="epsTimeLbl">00:00</div>
+    <input type="range" id="epsSlider" class="eps-slider" min="0" max="24" value="0" step="1" oninput="scrubEPS()">
+    <div style="font-size:10px;font-weight:800;color:#64748b;font-family:var(--sans);">EPS TIME</div>
   </div>
 
   <!-- PIPE CTX MENU -->
@@ -181,7 +229,7 @@ DOCTYPE html>
     <div style="padding:18px 22px 14px;border-bottom:1px solid rgba(255,255,255,0.06);display:flex;justify-content:space-between;align-items:center;background:linear-gradient(135deg,#0f172a 0%,#1a3460 100%);">
       <div>
         <div style="font-size:21px;font-weight:800;color:white;letter-spacing:-0.04em;font-family:'Space Grotesk',sans-serif;">PIPE<span style="color:#60a5fa;">-JS</span>&nbsp;<span style="color:#fbbf24;font-size:12px;vertical-align:middle;border:1px solid #fbbf24;border-radius:5px;padding:1px 7px;font-family:var(--mono);">PRO</span></div>
-        <div style="font-size:8.5px;color:#64748b;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;margin-top:3px;font-family:var(--mono);">BY คนไม่สัญจร</div>
+        <div style="font-size:8.5px;color:#64748b;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;margin-top:3px;font-family:var(--mono);">BY คนไม่สัญจร | EPS ENGINE</div>
       </div>
       <button onclick="toggleDrawer()" style="width:32px;height:32px;border-radius:9px;background:rgba(255,255,255,0.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;"><i class="fas fa-times" style="color:#94a3b8;"></i></button>
     </div>
@@ -218,11 +266,11 @@ DOCTYPE html>
         </div>
       </div>
 
-      <!-- RUN BUTTON -->
+      <!-- RUN BUTTON (UPDATED FOR EPS) -->
       <div style="background:linear-gradient(135deg,#1e3a5f,#0f172a);border-radius:16px;padding:3px;">
-        <button onclick="calculate()" style="width:100%;padding:14px;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:white;font-weight:800;font-size:13px;border-radius:13px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;transition:all 0.2s;font-family:var(--sans);" onmouseover="this.style.background='linear-gradient(135deg,#3b82f6,#2563eb)'" onmouseout="this.style.background='linear-gradient(135deg,#2563eb,#1d4ed8)'">
+        <button onclick="calculate()" id="btn-run" style="width:100%;padding:14px;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:white;font-weight:800;font-size:13px;border-radius:13px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;transition:all 0.2s;font-family:var(--sans);" onmouseover="this.style.background='linear-gradient(135deg,#3b82f6,#2563eb)'" onmouseout="this.style.background='linear-gradient(135deg,#2563eb,#1d4ed8)'">
           <svg width="15" height="15" viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21" fill="#fbbf24"/></svg>
-          วิเคราะห์ระบบ (RUN)
+          วิเคราะห์ระบบ (24-HR EPS)
           <svg width="13" height="13" viewBox="0 0 24 24" fill="#fbbf24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
         </button>
       </div>
@@ -245,6 +293,15 @@ DOCTYPE html>
         <select id="pjList" onchange="loadData()" style="width:100%;padding:10px 12px;border:1.5px solid #e2e8f0;border-radius:12px;font-size:12px;font-weight:700;background:white;outline:none;font-family:var(--sans);">
           <option value="">-- โหลดงานที่บันทึกไว้ --</option>
         </select>
+      </div>
+
+      <!-- DEMAND PATTERN PREVIEW (NEW) -->
+      <div style="border-top:1px solid #f1f5f9;padding-top:14px;">
+        <div class="sec-label">📊 Diurnal Demand Pattern</div>
+        <div style="font-size:9.5px;color:#64748b;margin-bottom:6px;line-height:1.4;">กราฟรูปแบบการใช้น้ำ 24 ชม. ที่โปรแกรมใช้คูณกับ Base Demand อัตโนมัติ</div>
+        <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:10px;height:120px;">
+          <canvas id="patternChart"></canvas>
+        </div>
       </div>
 
       <!-- LEGEND -->
@@ -288,6 +345,13 @@ DOCTYPE html>
       <button onclick="closeProp()" style="width:32px;height:32px;border-radius:8px;border:1px solid #e2e8f0;background:white;cursor:pointer;display:flex;align-items:center;justify-content:center;"><i class="fas fa-times" style="color:#94a3b8;"></i></button>
     </div>
     <div id="pContent" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:10px;padding-right:2px;"></div>
+    
+    <!-- EPS Chart Container inside Prop Panel (NEW) -->
+    <div id="propChartBox" class="chart-box hidden">
+       <div style="font-size:10px;font-weight:800;color:#64748b;margin-bottom:4px;font-family:var(--sans);" id="propChartTitle">24-Hour Trend</div>
+       <canvas id="propChartCanvas"></canvas>
+    </div>
+
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px;padding-top:14px;border-top:1px solid #f1f5f9;">
       <button onclick="saveProp()" style="background:linear-gradient(135deg,#2563eb,#1d4ed8);color:white;padding:13px;border-radius:13px;font-size:11px;font-weight:800;text-transform:uppercase;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;font-family:var(--sans);"><i class="fas fa-check"></i>บันทึก</button>
       <button onclick="deleteEl()" style="background:white;border:1.5px solid #fecdd3;color:#ef4444;padding:13px;border-radius:13px;font-size:11px;font-weight:800;text-transform:uppercase;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;font-family:var(--sans);"><i class="fas fa-trash"></i>ลบออก</button>
@@ -306,7 +370,7 @@ DOCTYPE html>
     <div class="modal-box">
       <div class="modal-hdr">
         <div>
-          <div style="font-size:14px;font-weight:800;color:white;font-family:var(--sans);">📊 รายงานผลการวิเคราะห์</div>
+          <div style="font-size:14px;font-weight:800;color:white;font-family:var(--sans);">📊 รายงานผลการวิเคราะห์ <span id="reportTimeStr" style="color:#fbbf24;font-size:12px;"></span></div>
           <div style="font-size:9px;color:#64748b;font-family:var(--mono);margin-top:2px;" id="reportTimestamp"></div>
         </div>
         <div style="display:flex;gap:8px;">
@@ -318,6 +382,34 @@ DOCTYPE html>
     </div>
   </div>
 
+  <!-- ADVISOR MODAL -->
+  <div id="advisorModal" class="modal-overlay" onclick="if(event.target===this)document.getElementById('advisorModal').classList.remove('show')">
+    <div class="modal-box" style="max-width:500px;">
+      <div class="modal-hdr" style="background:linear-gradient(135deg,#f59e0b,#d97706);">
+        <div>
+          <div style="font-size:14px;font-weight:800;color:white;font-family:var(--sans);"><i class="fas fa-magic"></i> AI Advisor (แนะนำการปรับปรุง)</div>
+          <div style="font-size:9px;color:rgba(255,255,255,0.8);font-family:var(--sans);margin-top:2px;">วิเคราะห์จุดบกพร่องและคอขวดของระบบ</div>
+        </div>
+        <button onclick="document.getElementById('advisorModal').classList.remove('show')" style="width:32px;height:32px;border-radius:8px;background:rgba(255,255,255,0.2);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;"><i class="fas fa-times" style="color:white;"></i></button>
+      </div>
+      <div class="modal-body" id="advisorBody"></div>
+    </div>
+  </div>
+
+  <!-- AI REPORT MODAL -->
+  <div id="aiReportModal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('show')">
+    <div class="modal-box" style="max-width:700px;">
+      <div class="modal-hdr" style="background:linear-gradient(135deg,#6d28d9,#4c1d95);">
+        <div>
+          <div style="font-size:14px;font-weight:800;color:white;font-family:var(--sans);">✨ AI Executive Summary</div>
+          <div style="font-size:9px;color:rgba(255,255,255,0.8);font-family:var(--sans);margin-top:2px;">วิเคราะห์เชิงลึกและสรุปผลโดย Gemini AI</div>
+        </div>
+        <button onclick="document.getElementById('aiReportModal').classList.remove('show')" style="width:32px;height:32px;border-radius:8px;background:rgba(255,255,255,0.2);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;"><i class="fas fa-times" style="color:white;"></i></button>
+      </div>
+      <div class="modal-body ai-markdown" id="aiReportContent" style="font-family:var(--sans);font-size:13px;line-height:1.6;color:#334155;"></div>
+    </div>
+  </div>
+
   <div id="st-msg">⚡ READY</div>
 </div>
 
@@ -325,6 +417,8 @@ DOCTYPE html>
 // ============================================================
 //  CONSTANTS & CONFIG
 // ============================================================
+const apiKey = ""; // Gemini API Key (Injected at runtime)
+
 const PIPE_SIZES = [15,20,25,32,40,50,65,80,100,150,200,250,300,350,400,450,500,600,700];
 const MATERIALS = [
   {id:'pvc',   name:'PVC / PE (พลาสติก)',    c:150, desc:'ท่อผิวเรียบ แรงเสียดทานต่ำมาก'},
@@ -334,13 +428,30 @@ const MATERIALS = [
   {id:'galv',  name:'Galvanized (สังกะสี)',  c:100, desc:'ท่อเหล็กอาบสังกะสี (ผ่านใช้)'}
 ];
 
-// Minor Loss Coefficients (K values for local losses)
+// Minor Loss Coefficients
 const MINOR_K = {
   valve:       { 100: 0.1, 50: 2.0, 20: 15.0, 10: 50.0, 0: 1e9 },
   check_valve: 2.5,
   air_valve:   0.5,
   hydrant:     1.5
 };
+
+// EPS Config
+const EPS_HOURS = 24;
+let currentTimeStep = 0;
+let isEPSComputed = false;
+let isPlaying = false;
+let playInterval = null;
+let propChartInst = null;
+
+// Standard Residential Diurnal Pattern (Multiplier per hour 0-24)
+const PATTERN_DIURNAL = [
+  0.5, 0.4, 0.4, 0.5, 0.8, 1.2, // 0-5
+  1.5, 1.4, 1.2, 1.0, 1.0, 1.1, // 6-11
+  1.2, 1.1, 1.0, 0.9, 1.0, 1.3, // 12-17
+  1.6, 1.7, 1.5, 1.2, 0.9, 0.6, // 18-23
+  0.5 // 24
+];
 
 // SVG icon library
 const SVG = {
@@ -417,10 +528,10 @@ function saveState(){
   updateUndoRedoButtons();
 }
 function undo(){
-  if(historyIndex>0){historyIndex--;const s=JSON.parse(stateHistory[historyIndex]);nodes=s.nodes;links=s.links;isCalculated=false;render();updateUndoRedoButtons();}
+  if(historyIndex>0){historyIndex--;const s=JSON.parse(stateHistory[historyIndex]);nodes=s.nodes;links=s.links;isCalculated=false;isEPSComputed=false;render();updateUndoRedoButtons();}
 }
 function redo(){
-  if(historyIndex<stateHistory.length-1){historyIndex++;const s=JSON.parse(stateHistory[historyIndex]);nodes=s.nodes;links=s.links;isCalculated=false;render();updateUndoRedoButtons();}
+  if(historyIndex<stateHistory.length-1){historyIndex++;const s=JSON.parse(stateHistory[historyIndex]);nodes=s.nodes;links=s.links;isCalculated=false;isEPSComputed=false;render();updateUndoRedoButtons();}
 }
 function updateUndoRedoButtons(){
   const u=document.getElementById('btn-undo'),r=document.getElementById('btn-redo');
@@ -429,12 +540,25 @@ function updateUndoRedoButtons(){
 }
 
 // ============================================================
-//  MAP INIT
+//  MAP INIT & BOOT SEQUENCE (UPDATED)
 // ============================================================
-document.addEventListener('DOMContentLoaded',()=>{
-  initMap(); refreshPjList();
-  setTimeout(()=>{checkUrlHash();saveState();},200);
-});
+let appInitDone = false;
+function initApp() {
+  if(appInitDone) return;
+  // Polling check to ensure external libraries are loaded before calling functions
+  if (typeof L === 'undefined' || typeof Chart === 'undefined' || typeof LZString === 'undefined') {
+    setTimeout(initApp, 50);
+    return;
+  }
+  appInitDone = true;
+  initMap(); 
+  refreshPjList(); 
+  renderPatternChart();
+  setTimeout(()=>{ checkUrlHash(); saveState(); }, 200);
+}
+
+document.addEventListener('DOMContentLoaded', initApp);
+window.addEventListener('load', initApp); // Fallback
 
 function log(t){ const el=document.getElementById('st-msg'); if(el) el.innerText='⚡ '+t.toUpperCase(); }
 function warn(msg){
@@ -488,15 +612,20 @@ async function onMapClick(e){
     let el=100;
     try{ const r=await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${e.latlng.lat}&longitude=${e.latlng.lng}`); const d=await r.json(); if(d.elevation&&d.elevation[0]!==null) el=d.elevation[0]; }catch(err){}
     const id=mode[0].toUpperCase()+Date.now().toString().slice(-4);
-    nodes.push({id,type:mode,lat:e.latlng.lat,lng:e.latlng.lng,el,dem:0,head:0,p:0,status:'OPEN',setting:15.0,waterLevel:20,pumpShutoff:45,pumpHead:30,pumpFlow:100,prvSize:100,openPercent:100,cvFlowAngle:0,cvBlocked:false});
+    nodes.push({
+      id,type:mode,lat:e.latlng.lat,lng:e.latlng.lng,el,
+      baseDem:0, dem:0, head:0, p:0,
+      status:'OPEN',setting:15.0,
+      waterLevel:20, tankDia:10, maxLevel:15, minLevel:0.5, // Added EPS Tank properties
+      pumpShutoff:45,pumpHead:30,pumpFlow:100,prvSize:100,openPercent:100,cvFlowAngle:0,cvBlocked:false,
+      history: { head:[], p:[], dem:[], wl:[] } // History arrays
+    });
     saveState(); render(); log("Ready");
   }
 }
 
 // ============================================================
-//  HAZEN-WILLIAMS RESISTANCE COEFFICIENT
-//  h_f = R * Q^1.852
-//  R = 10.67 * L / (C^1.852 * D^4.8704)
+//  MATH: HAZEN-WILLIAMS & MINOR LOSS
 // ============================================================
 function hwResistance(len, dia_mm, c){
   const D = Math.max(dia_mm, 1) / 1000;  // convert mm → m (prevent /0)
@@ -504,39 +633,21 @@ function hwResistance(len, dia_mm, c){
   const L = Math.max(len, 0.01);
   return 10.67 * L / (Math.pow(C, 1.852) * Math.pow(D, 4.8704));
 }
-
-// ============================================================
-//  MINOR LOSS RESISTANCE  (h_minor = K * V² / 2g)
-//  Equivalent as resistance in Q terms:
-//  h_minor = K * Q² / (2g * A²)  →  R_minor * Q^2
-// ============================================================
 function minorResistance(dia_mm, K_val){
   const D = Math.max(dia_mm, 1) / 1000;
   const A = Math.PI * Math.pow(D/2, 2);
   return K_val / (2 * 9.81 * A * A);
 }
-
-// ============================================================
-//  VALVE EQUIVALENT RESISTANCE (partial opening)
-//  Based on Cv concept: lower open% → exponentially higher K
-// ============================================================
 function valveKFactor(openPercent){
   if(openPercent <= 0)  return 1e12;
-  if(openPercent >= 100) return 0.15; // fully open gate valve ≈ K=0.15
-  // Interpolate on a logarithmic scale
+  if(openPercent >= 100) return 0.15;
   const t = openPercent / 100;
   return 0.15 * Math.pow(1/t, 2.5);
 }
-
-// ============================================================
-//  PIPE EFFECTIVE RESISTANCE (HW + Minor)
-// ============================================================
 function pipeResistance(link, nodeS, nodeE){
   const C = link.c || 150;
   const dia = link.dia || 100;
   const R_hw = hwResistance(link.len, dia, C);
-
-  // Accumulate minor losses at endpoints
   let K_total = 0;
   [nodeS, nodeE].forEach(n => {
     if(!n) return;
@@ -548,36 +659,122 @@ function pipeResistance(link, nodeS, nodeE){
     } else if(n.type === 'air_valve'){
       K_total += MINOR_K.air_valve;
     } else if(n.type === 'hydrant'){
-      K_total += MINOR_K.hydrant * 0.5; // split between two pipes
+      K_total += MINOR_K.hydrant * 0.5;
     }
   });
-
   const R_minor = K_total > 0 ? minorResistance(dia, K_total) : 0;
   return R_hw + R_minor;
 }
 
 // ============================================================
-//  MAIN CALCULATION ENGINE — Newton-Raphson (EPANET-like)
+//  ENGINEERING: EXTENDED PERIOD SIMULATION (EPS) CORE
 // ============================================================
-function calculate(){
-  log("กำลังวิเคราะห์ระบบ...");
+async function calculate() {
+  const btn = document.getElementById('btn-run');
+  const ogHtml = btn.innerHTML;
+  btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> COMPUTING 24-HR EPS...`;
+  btn.style.background = '#f59e0b';
+  document.getElementById('epsPanel').classList.remove('show');
+  
+  isEPSComputed = false;
   isCalculated = false;
-  return new Promise(resolve => {
-    setTimeout(()=>{
-      try { _doCalculate(); }
-      catch(e){ console.error("Calc error:", e); log("ERROR"); }
-      resolve();
-    }, 80);
+
+  // 1. Reset History & Set Initial States (t=0)
+  nodes.forEach(n => {
+    n.history = { head:[], p:[], dem:[], wl:[] };
+    n.baseDem = n.baseDem ?? n.dem; // Handle legacy saves
+    if(n.type==='tank') n.waterLevel = n.waterLevel || 5; 
   });
+  links.forEach(l => {
+    l.history = { flow:[], vel:[], hl:[], hf:[], hm:[] };
+  });
+
+  let totalIters = 0;
+  let allConverged = true;
+  let lastMaxRes = 0;
+
+  // 2. Main EPS Loop (0 to 24)
+  for (let t = 0; t <= EPS_HOURS; t++) {
+    
+    // --- A. Apply Time Patterns ---
+    const patMult = PATTERN_DIURNAL[t] || 1.0;
+    nodes.forEach(n => {
+      if(!['reservoir','tank','pump'].includes(n.type)) {
+        n.dem = (n.baseDem || 0) * patMult;
+      }
+    });
+
+    // --- B. Solve Network Hydraulics for this Snapshot ---
+    const stats = _solveHydraulics();
+    totalIters += stats.iters;
+    if(!stats.converged) allConverged = false;
+    lastMaxRes = stats.maxRes;
+
+    // --- C. Save Results to History ---
+    nodes.forEach(n => {
+      n.history.head.push(n.head||0);
+      n.history.p.push(n.p||0);
+      n.history.dem.push(n.dem||0);
+      if(n.type==='tank') n.history.wl.push(n.waterLevel||0);
+    });
+    links.forEach(l => {
+      l.history.flow.push(l.flow||0);
+      l.history.vel.push(l.vel||0);
+      l.history.hl.push(l.hl||0);
+      l.history.hf.push(l.hf||0);
+      l.history.hm.push(l.hm||0);
+    });
+
+    // --- D. Update Tank Levels for NEXT Time Step (Euler Integration) ---
+    if (t < EPS_HOURS) {
+      nodes.filter(n=>n.type==='tank').forEach(tk => {
+        let netFlow_m3h = 0;
+        links.filter(l => l.s===tk.id || l.e===tk.id).forEach(l => {
+           const sign = (l.e === tk.id) ? 1 : -1;
+           netFlow_m3h += (l.flow * sign);
+        });
+
+        const area = Math.PI * Math.pow((tk.tankDia||10)/2, 2);
+        const dV = netFlow_m3h * 1; // 1 hour dt
+        const dH = dV / area;
+
+        tk.waterLevel += dH;
+        if(tk.waterLevel > (tk.maxLevel||15)) tk.waterLevel = tk.maxLevel||15;
+        if(tk.waterLevel < (tk.minLevel||0.1)) tk.waterLevel = tk.minLevel||0.1;
+      });
+    }
+
+    // Yield to UI to prevent browser freeze
+    await new Promise(r => setTimeout(r, 5));
+  }
+
+  // 3. Finish
+  lastCalcStats = { iters: Math.round(totalIters/25), converged: allConverged, maxRes: lastMaxRes };
+  isEPSComputed = true;
+  isCalculated = true;
+  
+  btn.innerHTML = `<i class="fas fa-check"></i> EPS COMPLETE`;
+  btn.style.background = '#10b981';
+  setTimeout(()=> {
+    btn.innerHTML = ogHtml;
+    btn.style.background = 'linear-gradient(135deg,#2563eb,#1d4ed8)';
+  }, 2000);
+
+  document.getElementById('epsPanel').classList.add('show');
+  
+  // Jump to peak hour or 0
+  scrubEPS(0); 
+  if(!allConverged) warn("⚠ EPS บางชั่วโมงไม่ Converge (ผลลัพธ์อาจคลาดเคลื่อน)");
+  else log("วิเคราะห์ EPS เสร็จสิ้น ✓");
 }
 
-function _doCalculate(){
+// Pure Math Solver (Extracted from old _doCalculate)
+function _solveHydraulics(){
   const sources = nodes.filter(n => ['reservoir','tank','pump'].includes(n.type));
-  if(sources.length === 0){ log("ไม่มี Source — ข้าม"); return; }
+  if(sources.length === 0) return {iters:0, converged:true, maxRes:0};
 
-  // ---- Connectivity check (BFS) ----
-  const adj = {};
-  nodes.forEach(n => adj[n.id] = []);
+  // Connectivity BFS
+  const adj = {}; nodes.forEach(n => adj[n.id] = []);
   links.forEach(l => {
     const n1 = nodes.find(x=>x.id===l.s), n2 = nodes.find(x=>x.id===l.e);
     if(!n1||!n2) return;
@@ -591,7 +788,7 @@ function _doCalculate(){
   let hi = 0;
   while(hi < q.length){ const c=q[hi++]; (adj[c]||[]).forEach(nb=>{ if(!conn.has(nb)){conn.add(nb);q.push(nb);} }); }
 
-  // ---- Initial heads ----
+  // Initial Heads
   sources.forEach(s => {
     if(s.type === 'pump'){
       s.pumpShutoff = s.pumpShutoff || (s.pumpHead||30)*1.5;
@@ -603,35 +800,29 @@ function _doCalculate(){
     }
   });
   nodes.forEach(n => {
-    if(!['reservoir','tank','pump'].includes(n.type))
-      n.head = conn.has(n.id) ? n.el + 10 : n.el;
+    if(!['reservoir','tank','pump'].includes(n.type)) n.head = conn.has(n.id) ? n.el + 10 : n.el;
   });
 
-  // ---- Newton-Raphson iterative solver ----
+  // NR Loop
   const MAX_ITER = 1200;
   const TOL = 1e-6;
   let iters = 0, maxRes = 0, converged = false;
 
   for(let iter = 0; iter < MAX_ITER; iter++){
     maxRes = 0;
-
-    // -- Solve junction heads --
     nodes.forEach(n => {
       if(['reservoir','tank','pump'].includes(n.type) || !conn.has(n.id)) return;
-      if(n.type === 'valve' && (n.openPercent??100) === 0) return; // fully closed valve
+      if(n.type === 'valve' && (n.openPercent??100) === 0) return; 
 
       let sumQ = 0, sumdQdH = 0;
-
       links.filter(l => l.s===n.id || l.e===n.id).forEach(l => {
         const nbId = l.s===n.id ? l.e : l.s;
         const nb = nodes.find(x=>x.id===nbId);
         if(!nb || !conn.has(nbId)) return;
 
-        // Check valve blocking logic
         if(n.type === 'check_valve' || nb.type === 'check_valve'){
-          // Determine if flow direction violates CV direction (s→e is allowed)
           const flowDirectionOk = (l.s===n.id) ? (nb.head < n.head) : (nb.head > n.head);
-          if(!flowDirectionOk) return; // suppress this connection
+          if(!flowDirectionOk) return;
         }
 
         const nodeS = nodes.find(x=>x.id===l.s);
@@ -646,8 +837,7 @@ function _doCalculate(){
         if(aH > 1e-9){
           const Q = sign * Math.pow(aH / R, exp);
           const dQdH = exp * Math.abs(Q) / aH;
-          sumQ += Q;
-          sumdQdH += dQdH;
+          sumQ += Q; sumdQdH += dQdH;
         }
       });
 
@@ -657,59 +847,42 @@ function _doCalculate(){
 
       if(sumdQdH > 1e-12){
         let dH = res / sumdQdH;
-        dH = Math.max(-8, Math.min(8, dH)); // clamp step
+        dH = Math.max(-8, Math.min(8, dH));
         n.head += dH;
       } else if(res < -1e-9){
         n.head = Math.max(n.el, n.head - 1.5);
       }
 
-      // PRV enforcement
       if(n.type === 'prv'){
         const target = n.el + (n.setting||15);
         if(n.head > target) n.head = n.head * 0.4 + target * 0.6;
       }
     });
 
-    // -- Dynamic pump curve --
     nodes.forEach(p => {
       if(p.type !== 'pump' || !conn.has(p.id)) return;
-
       let Q_net_m3s = 0;
       links.filter(l => l.s===p.id || l.e===p.id).forEach(l => {
         const nbId = l.s===p.id ? l.e : l.s;
         const nb = nodes.find(x=>x.id===nbId);
         if(!nb || !conn.has(nbId)) return;
-
-        const nodeS = nodes.find(x=>x.id===l.s);
-        const nodeE = nodes.find(x=>x.id===l.e);
-        const R = pipeResistance(l, nodeS, nodeE);
+        const R = pipeResistance(l, nodes.find(x=>x.id===l.s), nodes.find(x=>x.id===l.e));
         const dH = p.head - nb.head, sign = dH>=0?1:-1, aH = Math.abs(dH);
         if(aH > 1e-9) Q_net_m3s += sign * Math.pow(aH/R, 1/1.852);
       });
 
       let Q_m3h = Math.max(0, Q_net_m3s * 3600);
-      // Pump curve: H = H_shutoff - R_pump * Q^2
-      let addHead = (p.pumpShutoff||45) - (p.pumpR||0.001) * Math.pow(Q_m3h, 2);
-      addHead = Math.max(0, addHead);
-
-      const targetHead = p.el + addHead;
-      p.head = p.head * 0.82 + targetHead * 0.18; // damped update
+      let addHead = Math.max(0, (p.pumpShutoff||45) - (p.pumpR||0.001) * Math.pow(Q_m3h, 2));
+      p.head = p.head * 0.82 + (p.el + addHead) * 0.18;
     });
 
     if(maxRes < TOL){ converged = true; iters = iter+1; break; }
     iters = iter + 1;
   }
 
-  lastCalcStats = { iters, converged, maxRes };
-
-  // ---- Final flow computation + checks ----
+  // Post process flows
   nodes.filter(n=>n.type==='check_valve').forEach(cv=>cv.cvBlocked=false);
-
-  let totD=0, totS=0, maxHL=0, maxV=0;
-  nodes.forEach(n => {
-    n.p = Math.max(0, n.head - n.el);
-    if(n.dem && n.dem > 0) totD += n.dem;
-  });
+  nodes.forEach(n => n.p = Math.max(0, n.head - n.el));
 
   links.forEach(l => {
     const n1 = nodes.find(x=>x.id===l.s), n2 = nodes.find(x=>x.id===l.e);
@@ -719,7 +892,6 @@ function _doCalculate(){
     const closed1 = n1.type==='valve' && (n1.openPercent??100)===0;
     const closed2 = n2.type==='valve' && (n2.openPercent??100)===0;
 
-    // Check valve backflow detection
     let cvBlocked = false;
     if(n1.type==='check_valve' || n2.type==='check_valve'){
       if(n1.head < n2.head){ cvBlocked = true; if(n1.type==='check_valve') n1.cvBlocked=true; if(n2.type==='check_valve') n2.cvBlocked=true; }
@@ -729,71 +901,107 @@ function _doCalculate(){
       l.flow=0; l.vel=0; l.hl=Math.abs(n1.head-n2.head); l.hf=l.hl; l.hm=0; l.re=0; return;
     }
 
-    const D = (l.dia||100)/1000;
-    const C = l.c||150;
-    const A = Math.PI * Math.pow(D/2, 2);
-    const dH = n1.head - n2.head;
-    const aH = Math.abs(dH);
-    const sign = dH >= 0 ? 1 : -1;
-
+    const D = (l.dia||100)/1000, C = l.c||150, A = Math.PI * Math.pow(D/2, 2);
+    const dH = n1.head - n2.head, aH = Math.abs(dH), sign = dH >= 0 ? 1 : -1;
     const R = pipeResistance(l, n1, n2);
     const Q_m3s = aH > 1e-9 ? Math.pow(aH/R, 1/1.852) : 0;
-    const vel_ms = Q_m3s / A;
-
+    
     l.flow = Q_m3s * 3600 * sign;
-    l.vel  = vel_ms * sign;
+    l.vel  = (Q_m3s / A) * sign;
     l.hl   = aH;
+    l.hf   = hwResistance(l.len, l.dia||100, C) * Math.pow(Q_m3s, 1.852);
+    l.hm   = Math.max(0, aH - l.hf);
+    l.re   = Math.abs(l.vel) * D / 1e-6;
+  });
 
-    // Decompose friction loss vs minor loss
-    const R_hw = hwResistance(l.len, l.dia||100, C);
-    l.hf = R_hw * Math.pow(Q_m3s, 1.852);
-    l.hm = Math.max(0, aH - l.hf);
+  return {iters, converged, maxRes};
+}
 
-    // Reynolds number (kinematic viscosity of water ≈ 1e-6 m²/s at 20°C)
-    l.re = Math.abs(vel_ms) * D / 1e-6;
+// ============================================================
+//  UI: EPS TIMELINE CONTROL
+// ============================================================
+function scrubEPS(val) {
+  if(!isEPSComputed) return;
+  const slider = document.getElementById('epsSlider');
+  if(val !== undefined) slider.value = val;
+  currentTimeStep = parseInt(slider.value);
+  document.getElementById('epsTimeLbl').innerText = currentTimeStep.toString().padStart(2,'0') + ':00';
+  
+  // Extract data from history to active state for rendering
+  nodes.forEach(n => {
+    n.head = n.history.head[currentTimeStep];
+    n.p = n.history.p[currentTimeStep];
+    n.dem = n.history.dem[currentTimeStep];
+    if(n.type==='tank') n.waterLevel = n.history.wl[currentTimeStep];
+  });
+  links.forEach(l => {
+    l.flow = l.history.flow[currentTimeStep];
+    l.vel = l.history.vel[currentTimeStep];
+    l.hl = l.history.hl[currentTimeStep];
+    l.hf = l.history.hf[currentTimeStep];
+    l.hm = l.history.hm[currentTimeStep];
+  });
 
-    if(aH > maxHL) maxHL = aH;
-    if(Math.abs(vel_ms) > maxV) maxV = Math.abs(vel_ms);
+  updateSummaryUI();
+  render();
+}
 
-    // Supply accounting
+function playEPS() {
+  if(!isEPSComputed) return;
+  const btn = document.getElementById('btn-play');
+  if(isPlaying) {
+    clearInterval(playInterval);
+    isPlaying = false;
+    btn.innerHTML = `<i class="fas fa-play"></i>`;
+  } else {
+    isPlaying = true;
+    btn.innerHTML = `<i class="fas fa-pause"></i>`;
+    if(currentTimeStep >= 24) scrubEPS(0);
+    playInterval = setInterval(() => {
+      let next = currentTimeStep + 1;
+      if(next > 24) { clearInterval(playInterval); isPlaying=false; btn.innerHTML=`<i class="fas fa-play"></i>`; }
+      else scrubEPS(next);
+    }, 800); // 800ms per step
+  }
+}
+
+function updateSummaryUI() {
+  if(!isEPSComputed) return;
+  
+  let totD=0, totS=0, maxHL=0, maxV=0;
+  nodes.forEach(n => { if(n.dem && n.dem > 0) totD += n.dem; });
+  
+  links.forEach(l => {
+    const n1 = nodes.find(x=>x.id===l.s), n2 = nodes.find(x=>x.id===l.e);
+    if(!n1||!n2) return;
+    if(l.hl > maxHL) maxHL = l.hl;
+    if(Math.abs(l.vel) > maxV) maxV = Math.abs(l.vel);
+    
+    const dH = n1.head - n2.head;
     const isSrc1 = ['reservoir','tank','pump'].includes(n1.type);
     const isSrc2 = ['reservoir','tank','pump'].includes(n2.type);
     if(isSrc1 && !isSrc2 && dH > 0) totS += Math.abs(l.flow);
     if(isSrc2 && !isSrc1 && dH < 0) totS += Math.abs(l.flow);
   });
 
-  // ---- Compute Check Valve angles ----
-  computeCheckValveAngles();
-
-  // ---- Update system summary ----
   const jns = nodes.filter(n=>!['reservoir','tank','pump'].includes(n.type));
   let minP_m = jns.length > 0 ? Infinity : 0;
   jns.forEach(n=>{ if(n.p < minP_m) minP_m = n.p; });
   const minP_bar = minP_m === Infinity ? 0 : minP_m / 10.197;
 
+  document.getElementById('sysHdrTitle').innerText = `⚡ Status @ ${currentTimeStep.toString().padStart(2,'0')}:00`;
   document.getElementById('val-supply').innerText = totS.toFixed(2)+' m³/h';
   document.getElementById('val-demand').innerText = totD.toFixed(2)+' m³/h';
   document.getElementById('val-min-p').innerText  = minP_bar.toFixed(2)+' bar';
   document.getElementById('val-max-hl').innerText = maxHL.toFixed(3)+' m';
   document.getElementById('val-max-v').innerText  = maxV.toFixed(2)+' m/s';
   document.getElementById('val-count').innerText  = nodes.length+' / '+links.length;
-  document.getElementById('val-iters').innerText  = iters;
+  document.getElementById('val-iters').innerText  = lastCalcStats.iters;
+  
   const convEl = document.getElementById('val-conv');
-  convEl.innerText = converged ? '✓ YES' : '✗ NO';
-  convEl.style.color = converged ? '#4ade80' : '#f87171';
+  convEl.innerText = lastCalcStats.converged ? '✓ YES' : '✗ NO';
+  convEl.style.color = lastCalcStats.converged ? '#4ade80' : '#f87171';
   document.getElementById('sysSummary').classList.add('show');
-
-  // Warnings
-  const warnings = [];
-  if(!converged) warnings.push(`⚠ ไม่ Converge (res=${lastCalcStats.maxRes.toExponential(2)}) — ตรวจสอบโครงข่าย`);
-  if(maxV > 2.5) warnings.push(`⚡ ความเร็วสูงเกิน 2.5 m/s — เสี่ยง Waterhammer`);
-  if(minP_bar < 0.5 && jns.length > 0) warnings.push(`🔴 แรงดันต่ำสุด < 0.5 bar — ไม่เพียงพอ`);
-  if(Math.abs(totS - totD) > 1 && totD > 0) warnings.push(`⚖ Supply/Demand ไม่สมดุล: ${totS.toFixed(1)} vs ${totD.toFixed(1)} m³/h`);
-  if(warnings.length > 0) warn(warnings[0]);
-
-  isCalculated = true;
-  render();
-  log(converged ? "วิเคราะห์เสร็จสิ้น ✓" : "เสร็จ (ไม่ Converge) !");
 }
 
 // ============================================================
@@ -805,18 +1013,9 @@ function computeCheckValveAngles(){
     const inbound  = adj.find(l=>l.e===cv.id);
     const outbound = adj.find(l=>l.s===cv.id);
     let upNode, dnNode;
-    if(inbound && outbound){
-      upNode = nodes.find(n=>n.id===inbound.s);
-      dnNode = nodes.find(n=>n.id===outbound.e);
-    } else if(adj.length>0){
-      upNode = nodes.find(n=>n.id===(adj[0].s===cv.id?adj[0].e:adj[0].s));
-      dnNode = nodes.find(n=>n.id===(adj[1]?.s===cv.id?adj[1].e:adj[1]?.s)) || upNode;
-    }
-    if(upNode && dnNode){
-      const dx = dnNode.lng - upNode.lng;
-      const dy = dnNode.lat - upNode.lat;
-      cv.cvFlowAngle = Math.atan2(-dy,dx)*(180/Math.PI);
-    }
+    if(inbound && outbound){ upNode = nodes.find(n=>n.id===inbound.s); dnNode = nodes.find(n=>n.id===outbound.e); } 
+    else if(adj.length>0){ upNode = nodes.find(n=>n.id===(adj[0].s===cv.id?adj[0].e:adj[0].s)); dnNode = nodes.find(n=>n.id===(adj[1]?.s===cv.id?adj[1].e:adj[1]?.s)) || upNode; }
+    if(upNode && dnNode){ cv.cvFlowAngle = Math.atan2(-(dnNode.lat-upNode.lat),dnNode.lng-upNode.lng)*(180/Math.PI); }
   });
 }
 
@@ -862,6 +1061,8 @@ function render(){
   for(let k in mapItems.m){ try{mapItems.m[k].unbindTooltip();map.removeLayer(mapItems.m[k]);}catch(e){} }
   mapItems={m:{},p:{}};
 
+  computeCheckValveAngles();
+
   links.forEach(l=>{
     const n1=nodes.find(n=>n.id===l.s), n2=nodes.find(n=>n.id===l.e);
     if(!n1||!n2) return;
@@ -872,24 +1073,10 @@ function render(){
     if (isCalculated && Math.abs(l.flow) > 0.001) {
       const pt1 = map.latLngToLayerPoint([n1.lat, n1.lng]);
       const pt2 = map.latLngToLayerPoint([n2.lat, n2.lng]);
-      const dx = pt2.x - pt1.x;
-      const dy = pt2.y - pt1.y;
-      let angle = Math.atan2(dy, dx) * 180 / Math.PI;
+      let angle = Math.atan2(pt2.y-pt1.y, pt2.x-pt1.x) * 180 / Math.PI;
       if (l.flow < 0) angle += 180;
-
-      const midLat = (n1.lat + n2.lat) / 2;
-      const midLng = (n1.lng + n2.lng) / 2;
-
-      const arrowIcon = L.divIcon({
-        className: '',
-        html: `<div style="transform: rotate(${angle}deg); display:flex; align-items:center; justify-content:center; width:100%; height:100%; pointer-events:none;">
-          <svg width="14" height="14" viewBox="0 0 24 24" style="filter:drop-shadow(0 1px 2px rgba(0,0,0,0.3));"><polygon points="4,4 22,12 4,20" fill="${color}" stroke="#ffffff" stroke-width="2.5"/></svg>
-        </div>`,
-        iconSize: [20, 20],
-        iconAnchor: [10, 10]
-      });
-      const arrowMarker = L.marker([midLat, midLng], {icon: arrowIcon, interactive: false}).addTo(map);
-      mapItems.p[l.id + '_arrow'] = arrowMarker;
+      const arrowIcon = L.divIcon({ className: '', html: `<div style="transform: rotate(${angle}deg); display:flex; align-items:center; justify-content:center; width:100%; height:100%; pointer-events:none;"><svg width="14" height="14" viewBox="0 0 24 24" style="filter:drop-shadow(0 1px 2px rgba(0,0,0,0.3));"><polygon points="4,4 22,12 4,20" fill="${color}" stroke="#ffffff" stroke-width="2.5"/></svg></div>`, iconSize: [20, 20], iconAnchor: [10, 10] });
+      mapItems.p[l.id + '_arrow'] = L.marker([(n1.lat+n2.lat)/2, (n1.lng+n2.lng)/2], {icon: arrowIcon, interactive: false}).addTo(map);
     }
 
     let tip = `<div style="text-align:left;font-family:var(--mono);">`;
@@ -906,14 +1093,7 @@ function render(){
     tip += `</div>`;
 
     poly.bindTooltip(tip,{permanent:showRes,direction:'top',offset:[0,-6],className:'custom-eng-tooltip'});
-    poly.on('click',(e)=>{
-      L.DomEvent.stopPropagation(e);
-      ctxPipeId=l.id; ctxLatLng=e.latlng;
-      const menu=document.getElementById('pipe-ctx-menu');
-      menu.style.left=e.originalEvent.pageX+'px';
-      menu.style.top=e.originalEvent.pageY+'px';
-      menu.classList.remove('hidden');
-    });
+    poly.on('click',(e)=>{ L.DomEvent.stopPropagation(e); ctxPipeId=l.id; ctxLatLng=e.latlng; const menu=document.getElementById('pipe-ctx-menu'); menu.style.left=e.originalEvent.pageX+'px'; menu.style.top=e.originalEvent.pageY+'px'; menu.classList.remove('hidden'); });
     mapItems.p[l.id]=poly;
   });
 
@@ -940,7 +1120,9 @@ function render(){
       const opH = isCalculated?(n.head-n.el).toFixed(2):(n.pumpHead||30);
       nc+=`<b style="color:#ef4444;">H_op:</b> ${opH}m<br>`;
     } else if(['reservoir','tank'].includes(n.type)){
-      nc+=`<b style="color:#0891b2;">WL:</b> ${n.waterLevel||20}m<br>`;
+      nc+=`<b style="color:#0891b2;">WL:</b> ${(n.waterLevel||20).toFixed(2)}m`;
+      if(n.type==='tank') nc+=` (Max ${n.maxLevel})`;
+      nc+=`<br>`;
     }
     if(n.dem && n.dem>0) nc+=`<b style="color:#dc2626;">Dem:</b> ${n.dem.toFixed(2)} m³/h<br>`;
     nc+=`<b style="color:#475569;">Elev:</b> ${n.el.toFixed(2)}m<br>`;
@@ -950,11 +1132,7 @@ function render(){
     }
     nc+=`</div>`;
     if(nc) m.bindTooltip(nc,{permanent:showRes,direction:'right',offset:[24,0],className:'custom-eng-tooltip'});
-    m.on('click',(e)=>{
-      L.DomEvent.stopPropagation(e);
-      document.getElementById('pipe-ctx-menu').classList.add('hidden');
-      if(mode==='pipe') handlePipe(n.id); else openProp(n.id,'node');
-    });
+    m.on('click',(e)=>{ L.DomEvent.stopPropagation(e); document.getElementById('pipe-ctx-menu').classList.add('hidden'); if(mode==='pipe') handlePipe(n.id); else openProp(n.id,'node'); });
     mapItems.m[n.id]=m;
   });
 }
@@ -1058,10 +1236,14 @@ function openProp(id, type){
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">${inp('i_pump_head','H_design (m)',el.pumpHead||30)}${inp('i_pump_flow','Q_design (m³/h)',el.pumpFlow||100,'number','1')}</div>
         <p style="font-size:9px;color:#64748b;margin-top:8px;font-family:var(--mono);">R_pump = (H₀ - H_d) / Q_d²</p>
       </div>`;
-    } else if(['reservoir','tank'].includes(el.type)){
-      h+=inp('i_wl','💧 Water Level (m above node elev)',el.waterLevel||20);
-    } else if(!['valve','prv','air_valve','hydrant','check_valve'].includes(el.type)){
-      h+=inp('i_dem','🔴 Base Demand (m³/h)',el.dem||0);
+    } else if(el.type==='tank'){
+      h+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">${inp('i_dia_tk','Diameter ถัง (m)',el.tankDia||10)}${inp('i_wl','Initial Level (m)',el.waterLevel||5)}</div>`;
+      h+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">${inp('i_minl','Min Level (m)',el.minLevel||0.5)}${inp('i_maxl','Max Level (m)',el.maxLevel||15)}</div>`;
+    } else if(el.type==='reservoir'){
+      h+=inp('i_wl','💧 Head (m)',el.waterLevel||20);
+    } else if(!['air_valve','hydrant'].includes(el.type)){
+      h+=inp('i_dem','🔴 Base Demand (m³/h)',el.baseDem ?? el.dem ?? 0);
+      h+=`<div style="font-size:9px;color:#64748b;margin-top:4px;">*ผูกกับ Diurnal Pattern อัตโนมัติในโหมด EPS</div>`;
     }
   } else {
     // Pipe properties
@@ -1070,7 +1252,6 @@ function openProp(id, type){
     const mm = MATERIALS.find(m=>m.c===cc);
     const co = MATERIALS.map(m=>`<option value="${m.c}">${m.name} (C=${m.c})</option>`).join('');
     const R_hw = hwResistance(el.len, el.dia||100, cc);
-    
     const d_init = el.dia || 100;
     const a_init = Math.PI * Math.pow(d_init/2000, 2);
     const q_rec_init = (a_init * 1.5 * 3600).toFixed(1);
@@ -1085,6 +1266,75 @@ function openProp(id, type){
     </div>`;
   }
   box.innerHTML = h;
+
+  // Render Chart if EPS is computed
+  const cb = document.getElementById('propChartBox');
+  if(isEPSComputed) {
+    cb.classList.remove('hidden');
+    renderPropChart(el, type);
+  } else {
+    cb.classList.add('hidden');
+  }
+}
+
+function renderPropChart(el, type) {
+  const ctx = document.getElementById('propChartCanvas').getContext('2d');
+  if(propChartInst) propChartInst.destroy();
+  
+  const labels = Array.from({length:25}, (_,i) => i+':00');
+  let datasets = [];
+  let title = "";
+
+  if(type==='node') {
+    if(el.type==='tank') {
+       title = "Tank Water Level (m)";
+       datasets.push({ label: 'Water Level (m)', data: el.history.wl, borderColor: '#0891b2', backgroundColor: 'rgba(8, 145, 178, 0.1)', fill:true, tension:0.4 });
+    } else if(['reservoir','pump'].includes(el.type)) {
+       title = "Total Head (m)";
+       datasets.push({ label: 'Head (m)', data: el.history.head, borderColor: '#10b981', tension:0.4 });
+    } else {
+       title = "Pressure (bar) & Demand (m³/h)";
+       datasets.push({ label: 'Pressure (bar)', data: el.history.p.map(p=>p/10.197), borderColor: '#f59e0b', yAxisID: 'y' });
+       if((el.baseDem||0) > 0 || (el.dem||0) > 0) datasets.push({ label: 'Demand (m³/h)', data: el.history.dem, borderColor: '#ef4444', borderDash: [5,5], yAxisID: 'y1' });
+    }
+  } else {
+    title = "Flow (m³/h) & Velocity (m/s)";
+    datasets.push({ label: 'Flow (m³/h)', data: el.history.flow.map(Math.abs), borderColor: '#2563eb', fill:true, backgroundColor: 'rgba(37, 99, 235, 0.1)', yAxisID: 'y' });
+    datasets.push({ label: 'Velocity (m/s)', data: el.history.vel.map(Math.abs), borderColor: '#8b5cf6', yAxisID: 'y1' });
+  }
+
+  document.getElementById('propChartTitle').innerText = title;
+
+  propChartInst = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth:12, font:{size:9, family:"'JetBrains Mono', monospace"} } } },
+      scales: {
+        x: { ticks: { font:{size:8}, maxTicksLimit: 8 } },
+        y: { type: 'linear', display: true, position: 'left', ticks:{font:{size:9}} },
+        y1: { type: 'linear', display: datasets.length>1, position: 'right', grid: {drawOnChartArea: false}, ticks:{font:{size:9}} }
+      }
+    }
+  });
+}
+
+function renderPatternChart() {
+  const ctx = document.getElementById('patternChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: Array.from({length:25}, (_,i) => i),
+      datasets: [{ label: 'Multiplier', data: PATTERN_DIURNAL, backgroundColor: '#60a5fa', borderRadius: 4 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { x: { grid: {display:false}, ticks:{font:{size:8}} }, y: { ticks:{font:{size:9}} } }
+    }
+  });
 }
 
 async function saveProp(){
@@ -1098,7 +1348,10 @@ async function saveProp(){
     if(v('i_prv_size')!==null)   el.prvSize=parseFloat(v('i_prv_size'))||100;
     if(v('i_valve_open')!==null){ el.openPercent=parseInt(v('i_valve_open')); el.status=el.openPercent===0?'CLOSED':'OPEN'; }
     if(v('i_wl')!==null)         el.waterLevel=parseFloat(v('i_wl'))||0;
-    if(v('i_dem')!==null)        el.dem=parseFloat(v('i_dem'))||0;
+    if(v('i_dia_tk')!==null)     el.tankDia=parseFloat(v('i_dia_tk'))||10;
+    if(v('i_minl')!==null)       el.minLevel=parseFloat(v('i_minl'))||0.5;
+    if(v('i_maxl')!==null)       el.maxLevel=parseFloat(v('i_maxl'))||15;
+    if(v('i_dem')!==null) {      el.baseDem=parseFloat(v('i_dem'))||0; el.dem=el.baseDem; }
     if(v('i_pump_shutoff')!==null) el.pumpShutoff=parseFloat(v('i_pump_shutoff'))||45;
     if(v('i_pump_head')!==null)    el.pumpHead=parseFloat(v('i_pump_head'))||30;
     if(v('i_pump_flow')!==null)    el.pumpFlow=parseFloat(v('i_pump_flow'))||100;
@@ -1108,22 +1361,25 @@ async function saveProp(){
     if(l) el.len=parseFloat(l.value)||1;
     if(c) el.c=parseFloat(c.value)||150;
   }
-  saveState(); closeProp(); await calculate(); render();
+  saveState(); closeProp(); 
+  if(isEPSComputed) await calculate(); // Re-run EPS if already computed
+  else { isCalculated=false; render(); }
 }
 function closeProp(){ document.getElementById('propPanel').classList.add('hidden'); selId=null; }
 
 function flipCV(id){
   links.forEach(l=>{ if(l.s===id||l.e===id){ const tmp=l.s; l.s=l.e; l.e=tmp; } });
   const cv=nodes.find(n=>n.id===id); if(cv) cv.cvBlocked=false;
-  isCalculated=false; saveState(); render(); openProp(id,'node');
+  isCalculated=false; isEPSComputed=false; document.getElementById('epsPanel').classList.remove('show');
+  saveState(); render(); openProp(id,'node');
 }
 
 async function deleteEl(){
   nodes=nodes.filter(n=>n.id!==selId);
   links=links.filter(l=>l.id!==selId&&l.s!==selId&&l.e!==selId);
   saveState(); closeProp();
-  const src=nodes.filter(n=>['reservoir','tank','pump'].includes(n.type));
-  if(src.length>0&&links.length>0) await calculate(); else {isCalculated=false;render();}
+  isCalculated=false; isEPSComputed=false; document.getElementById('epsPanel').classList.remove('show');
+  render();
 }
 
 function handlePipe(id){
@@ -1133,7 +1389,7 @@ function handlePipe(id){
       const n1=nodes.find(n=>n.id===startNodeId), n2=nodes.find(n=>n.id===id);
       if(n1&&n2){
         const d=L.latLng(n1.lat,n1.lng).distanceTo(L.latLng(n2.lat,n2.lng));
-        links.push({id:'L'+Date.now().toString().slice(-4),s:startNodeId,e:id,len:d,dia:100,mat:'pvc',c:150,flow:0,vel:0,hl:0,hf:0,hm:0,re:0});
+        links.push({id:'L'+Date.now().toString().slice(-4),s:startNodeId,e:id,len:d,dia:100,mat:'pvc',c:150,flow:0,vel:0,hl:0,hf:0,hm:0,re:0,history:{flow:[],vel:[],hl:[],hf:[],hm:[]}});
         saveState(); render();
       }
     }
@@ -1154,12 +1410,18 @@ function insertAcc(type){
   const pre={valve:'V',prv:'PRV',air_valve:'AV',hydrant:'HYD',check_valve:'CV'};
   const nId=(pre[type]||'X')+Date.now().toString().slice(-4);
   const sNode=nodes.find(n=>n.id===pipe.s);
-  nodes.push({id:nId,type,lat:ctxLatLng.lat,lng:ctxLatLng.lng,el:sNode?sNode.el:10,dem:type==='hydrant'?10:0,head:0,p:0,status:'OPEN',setting:15.0,prvSize:pipe.dia||100,openPercent:100,waterLevel:10,pumpShutoff:45,pumpHead:30,pumpFlow:100,cvFlowAngle:0,cvBlocked:false});
+  nodes.push({
+    id:nId,type,lat:ctxLatLng.lat,lng:ctxLatLng.lng,el:sNode?sNode.el:10,
+    baseDem:type==='hydrant'?10:0, dem:type==='hydrant'?10:0,
+    head:0,p:0,status:'OPEN',setting:15.0,prvSize:pipe.dia||100,openPercent:100,
+    waterLevel:10,pumpShutoff:45,pumpHead:30,pumpFlow:100,cvFlowAngle:0,cvBlocked:false,
+    history:{head:[],p:[],dem:[],wl:[]}
+  });
   const half=Math.max(pipe.len/2,0.1);
   links=links.filter(p=>p.id!==ctxPipeId);
-  links.push({id:'L'+Date.now().toString().slice(-4)+'A',s:pipe.s,e:nId,len:half,dia:pipe.dia,mat:pipe.mat,c:pipe.c,flow:0,vel:0,hl:0,hf:0,hm:0,re:0});
-  links.push({id:'L'+(Date.now()+1).toString().slice(-4)+'B',s:nId,e:pipe.e,len:half,dia:pipe.dia,mat:pipe.mat,c:pipe.c,flow:0,vel:0,hl:0,hf:0,hm:0,re:0});
-  ctxPipeId=null; ctxLatLng=null; isCalculated=false; saveState(); render();
+  links.push({id:'L'+Date.now().toString().slice(-4)+'A',s:pipe.s,e:nId,len:half,dia:pipe.dia,mat:pipe.mat,c:pipe.c,flow:0,vel:0,hl:0,hf:0,hm:0,re:0,history:{flow:[],vel:[],hl:[],hf:[],hm:[]}});
+  links.push({id:'L'+(Date.now()+1).toString().slice(-4)+'B',s:nId,e:pipe.e,len:half,dia:pipe.dia,mat:pipe.mat,c:pipe.c,flow:0,vel:0,hl:0,hf:0,hm:0,re:0,history:{flow:[],vel:[],hl:[],hf:[],hm:[]}});
+  ctxPipeId=null; ctxLatLng=null; isCalculated=false; isEPSComputed=false; document.getElementById('epsPanel').classList.remove('show'); saveState(); render();
 }
 
 // ============================================================
@@ -1183,6 +1445,9 @@ function pressBadge(p_bar){
 function openReport(){
   if(!isCalculated){ warn("กรุณา RUN วิเคราะห์ระบบก่อน"); return; }
   document.getElementById('reportTimestamp').innerText = 'Generated: '+new Date().toLocaleString('th-TH');
+  if(isEPSComputed) document.getElementById('reportTimeStr').innerText = `@ Time: ${currentTimeStep.toString().padStart(2,'0')}:00`;
+  else document.getElementById('reportTimeStr').innerText = '';
+  
   const body = document.getElementById('reportBody');
 
   // Nodes table
@@ -1226,18 +1491,106 @@ function openReport(){
     <div style="font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px;font-family:var(--sans);">🔢 Solver Statistics</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px;font-family:var(--mono);">
       <div><span style="color:#94a3b8;">Algorithm:</span> Newton-Raphson</div>
-      <div><span style="color:#94a3b8;">Iterations:</span> ${lastCalcStats.iters}</div>
+      <div><span style="color:#94a3b8;">Avg Iterations:</span> ${lastCalcStats.iters}</div>
       <div><span style="color:#94a3b8;">Converged:</span> <span style="color:${lastCalcStats.converged?'#22c55e':'#ef4444'}">${lastCalcStats.converged?'YES':'NO'}</span></div>
       <div><span style="color:#94a3b8;">Max Residual:</span> ${lastCalcStats.maxRes.toExponential(2)}</div>
       <div><span style="color:#94a3b8;">Tolerance:</span> 1×10⁻⁶</div>
-      <div><span style="color:#94a3b8;">HW Formula:</span> h_f = R·Q¹·⁸⁵²</div>
+      <div><span style="color:#94a3b8;">Simulation:</span> ${isEPSComputed?'24-HR EPS':'Steady State'}</div>
     </div>
   </div>`;
+
+  // Update header buttons to include AI Summary
+  const hdrHtml = `
+        <div>
+          <div style="font-size:14px;font-weight:800;color:white;font-family:var(--sans);">📊 รายงานผลการวิเคราะห์ <span id="reportTimeStr" style="color:#fbbf24;font-size:12px;"></span></div>
+          <div style="font-size:9px;color:#64748b;font-family:var(--mono);margin-top:2px;" id="reportTimestamp">Generated: ${new Date().toLocaleString('th-TH')}</div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button onclick="generateAISummary()" style="background:linear-gradient(135deg, #8b5cf6, #6d28d9);border:none;color:white;border-radius:10px;padding:7px 14px;cursor:pointer;font-size:10px;font-weight:800;font-family:var(--sans);box-shadow:0 2px 8px rgba(139,92,246,0.4);"><i class="fas fa-magic"></i> ✨ AI สรุปผู้บริหาร</button>
+          <button onclick="exportCSV()" style="background:rgba(251,191,36,0.15);border:1px solid rgba(251,191,36,0.3);color:#fbbf24;border-radius:10px;padding:7px 14px;cursor:pointer;font-size:10px;font-weight:800;font-family:var(--sans);"><i class="fas fa-file-csv"></i> CSV</button>
+          <button onclick="closeReport()" style="width:32px;height:32px;border-radius:8px;background:rgba(255,255,255,0.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;"><i class="fas fa-times" style="color:#94a3b8;"></i></button>
+        </div>
+  `;
+  document.querySelector('#reportModal .modal-hdr').innerHTML = hdrHtml;
 
   body.innerHTML = html;
   document.getElementById('reportModal').classList.add('show');
 }
 function closeReport(){ document.getElementById('reportModal').classList.remove('show'); }
+
+// ============================================================
+//  GEMINI AI INTEGRATION
+// ============================================================
+async function fetchWithRetry(url, options, retries = 5) {
+  const delays = [1000, 2000, 4000, 8000, 16000];
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch(url, options);
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      return await response.json();
+    } catch (e) {
+      if (i === retries - 1) throw e;
+      await new Promise(r => setTimeout(r, delays[i]));
+    }
+  }
+}
+
+async function generateAISummary() {
+  if (!isCalculated) return warn("กรุณารันวิเคราะห์ระบบก่อนใช้งาน AI");
+
+  // Show AI modal / loading state
+  const aiBody = document.getElementById('aiReportContent');
+  document.getElementById('aiReportModal').classList.add('show');
+  aiBody.innerHTML = '<div style="text-align:center;padding:50px;"><i class="fas fa-spinner fa-spin" style="font-size:40px;color:#8b5cf6;"></i><div style="margin-top:16px;font-weight:800;font-family:var(--sans);">✨ AI กำลังเขียนบทสรุปสำหรับผู้บริหาร...</div><div style="font-size:11px;color:#64748b;margin-top:4px;">Gemini กำลังวิเคราะห์ผลลัพธ์ของโครงข่ายท่อ</div></div>';
+
+  // Prepare data context for the LLM
+  const jns = nodes.filter(n => !['reservoir','tank'].includes(n.type));
+  const lowPressureNodes = jns.filter(n => (n.p/10.197) < 0.5).map(n => `ID: ${n.id} (${(n.p/10.197).toFixed(2)} bar)`).join(', ');
+  const highVelPipes = links.filter(l => Math.abs(l.vel) > 1.5).map(l => `ID: ${l.id} (${Math.abs(l.vel).toFixed(2)} m/s, dia ${l.dia}mm)`).join(', ');
+
+  const dataStr = `
+  สถานะระบบรวม (System Overview):
+  - โหนดทั้งหมด: ${nodes.length} จุด, ท่อทั้งหมด: ${links.length} เส้น
+  - น้ำจ่ายเข้าระบบ (Supply): ${document.getElementById('val-supply').innerText}
+  - ความต้องการน้ำ (Demand): ${document.getElementById('val-demand').innerText}
+  - แรงดันต่ำสุดในระบบ: ${document.getElementById('val-min-p').innerText}
+  - ความเร็วสูงสุดในท่อ: ${document.getElementById('val-max-v').innerText}
+  - การคำนวณสมบูรณ์ (Converged): ${lastCalcStats.converged ? 'ใช่ (สำเร็จ)' : 'ไม่ (มีข้อผิดพลาด)'}
+
+  จุดที่ต้องเฝ้าระวัง (Critical Points):
+  - ท่อที่ความเร็วเกินมาตรฐาน (> 1.5 m/s): ${highVelPipes || 'ไม่มี (อยู่ในเกณฑ์ดี)'}
+  - จุดต่อที่แรงดันต่ำกว่าเกณฑ์ (< 0.5 bar): ${lowPressureNodes || 'ไม่มี (อยู่ในเกณฑ์ดี)'}
+  `;
+
+  const promptText = `คุณคือวิศวกรประปาอาวุโส (Senior Hydraulic Engineer) 
+  โปรดสรุปผลการจำลองโครงข่ายท่อประปา (Water Distribution Network Simulation) ด้านล่างนี้ ให้เป็น **บทสรุปสำหรับผู้บริหาร (Executive Summary)** แบบอ่านง่าย ได้ใจความ และดูเป็นมืออาชีพ
+  
+  คำสั่งพิเศษ:
+  1. วิเคราะห์จากข้อมูลดิบที่ให้ไป หากมีจุดที่แรงดันตก หรือความเร็วท่อเกินเกณฑ์ ให้เตือนถึงความเสี่ยงอย่างชัดเจน (เช่น น้ำไม่ไหลขึ้นชั้น 2, ท่ออาจแตกหรือสูญเสียพลังงานเยอะ)
+  2. หากระบบอยู่ในเกณฑ์ดี ให้ชื่นชมว่าออกแบบมาได้เหมาะสม
+  3. เขียนคำแนะนำสั้นๆ 1-2 ข้อ ว่าควรปรับปรุงแก้ไขตรงไหน (เช่น ควรเปลี่ยนขนาดท่อเส้นไหน หรือเพิ่มถังสูง)
+  4. ใช้ภาษาไทย และจัดรูปแบบด้วย Markdown (ใช้สัญลักษณ์ Emoji เล็กน้อยให้ดูน่าสนใจ)
+
+  ข้อมูลผลการวิเคราะห์ล่าสุด:
+  ${dataStr}`;
+
+  try {
+    const payload = {
+      contents: [{ parts: [{ text: promptText }] }]
+    };
+    const result = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const text = result.candidates?.[0]?.content?.parts?.[0]?.text || "เกิดข้อผิดพลาดในการดึงข้อมูลจาก AI";
+    // Convert Markdown to HTML using marked.js
+    aiBody.innerHTML = marked.parse(text);
+  } catch (e) {
+    aiBody.innerHTML = `<div style="text-align:center;color:#ef4444;padding:30px;"><i class="fas fa-exclamation-triangle" style="font-size:30px;margin-bottom:10px;"></i><br><b>เกิดข้อผิดพลาดในการเชื่อมต่อ AI</b><br><span style="font-size:11px;">${e.message}</span></div>`;
+  }
+}
 
 // ============================================================
 //  FILE OPS
@@ -1256,10 +1609,19 @@ function refreshPjList(){
 }
 function loadData(){
   const k=document.getElementById('pjList').value; if(!k) return;
-  try{ const d=JSON.parse(localStorage.getItem(k)); if(d&&d.nodes&&d.links){ nodes=d.nodes;links=d.links;saveState();calculate().then(()=>{render();log("Loaded");});} }
+  try{ 
+    const d=JSON.parse(localStorage.getItem(k)); 
+    if(d&&d.nodes&&d.links){ 
+      nodes=d.nodes;links=d.links;saveState();
+      // Inject missing EPS properties for old saves
+      nodes.forEach(n => { n.history = n.history || { head:[], p:[], dem:[], wl:[] }; n.baseDem = n.baseDem ?? n.dem; });
+      links.forEach(l => { l.history = l.history || { flow:[], vel:[], hl:[], hf:[], hm:[] }; });
+      calculate().then(()=>{render();log("Loaded");});
+    } 
+  }
   catch(e){ alert("ไม่สามารถโหลดข้อมูลได้"); }
 }
-function clearData(){ if(confirm("⚠️ ล้างหน้าจอทั้งหมด?")){nodes=[];links=[];isCalculated=false;document.getElementById('sysSummary').classList.remove('show');saveState();render();} }
+function clearData(){ if(confirm("⚠️ ล้างหน้าจอทั้งหมด?")){nodes=[];links=[];isCalculated=false;isEPSComputed=false;document.getElementById('sysSummary').classList.remove('show');document.getElementById('epsPanel').classList.remove('show');saveState();render();} }
 
 window.copyToClipboard = async function(text){
   try{await navigator.clipboard.writeText(text);return true;}
@@ -1292,7 +1654,8 @@ function exportCSV(){
   csv+="--- PIPE-JS PRO | Hazen-Williams Network Analysis ---\n";
   csv+=`Project: ${document.getElementById('pjName').value||'Unnamed'}\n`;
   csv+=`Date: ${new Date().toLocaleString('th-TH')}\n`;
-  csv+=`Solver: Newton-Raphson | Converged: ${lastCalcStats.converged} | Iterations: ${lastCalcStats.iters}\n\n`;
+  csv+=`Solver: Newton-Raphson | Converged: ${lastCalcStats.converged} | Avg Iterations: ${lastCalcStats.iters}\n`;
+  csv+=`Simulation: ${isEPSComputed?'24-HR EPS @ Hour '+currentTimeStep:'Steady State'}\n\n`;
   csv+="--- NODE RESULTS ---\n";
   csv+="Type,Elevation(m),Demand(m3/h),Total Head(m),Pressure(bar),Pressure(mWC)\n";
   nodes.forEach(n=>{
@@ -1310,7 +1673,7 @@ function exportCSV(){
 }
 function exportJSON(){
   if(nodes.length===0) return alert("ไม่มีข้อมูลที่จะบันทึก");
-  const blob=new Blob([JSON.stringify({nodes,links,meta:{version:'pro',date:new Date().toISOString()}},null,2)],{type:'application/json'});
+  const blob=new Blob([JSON.stringify({nodes,links,meta:{version:'pro_eps',date:new Date().toISOString()}},null,2)],{type:'application/json'});
   const url=URL.createObjectURL(blob);
   const a=document.createElement("a"); a.href=url; a.download=(document.getElementById('pjName').value||"pipe_project")+"_Backup.json"; a.click();
 }
@@ -1320,7 +1683,13 @@ function importFile(event){
   reader.onload=function(e){
     try{
       const data=JSON.parse(e.target.result);
-      if(data.nodes&&data.links){ nodes=data.nodes;links=data.links;saveState();if(nodes.length>0&&map)map.setView([nodes[0].lat,nodes[0].lng],16);calculate().then(()=>render());document.getElementById('pjName').value=file.name.replace('.json','').replace('_Backup',''); alert("✅ โหลดไฟล์สำเร็จ"); }
+      if(data.nodes&&data.links){ 
+        nodes=data.nodes;links=data.links;saveState();
+        if(nodes.length>0&&map)map.setView([nodes[0].lat,nodes[0].lng],16);
+        nodes.forEach(n => { n.history = n.history || { head:[], p:[], dem:[], wl:[] }; n.baseDem = n.baseDem ?? n.dem; });
+        links.forEach(l => { l.history = l.history || { flow:[], vel:[], hl:[], hf:[], hm:[] }; });
+        calculate().then(()=>render());document.getElementById('pjName').value=file.name.replace('.json','').replace('_Backup',''); alert("✅ โหลดไฟล์สำเร็จ"); 
+      }
     }catch(err){ alert("❌ รูปแบบไฟล์ไม่ถูกต้อง"); }
   };
   reader.readAsText(file); event.target.value='';
@@ -1333,6 +1702,163 @@ function toggleRes(){
   else{btn.classList.remove('active');if(lbl)lbl.innerText='แสดงป้าย';}
   render();
 }
+
+// ============================================================
+//  SMART ADVISOR (AI RECOMMENDATIONS)
+// ============================================================
+let activeHighlightLayer = null;
+
+function openAdvisor() {
+  if (!isCalculated) {
+    warn("กรุณากด 'วิเคราะห์ระบบ' ก่อนใช้งานผู้ช่วยแนะนำ");
+    return;
+  }
+  const body = document.getElementById('advisorBody');
+  let html = '';
+  let issueCount = 0;
+
+  // 1. Check Pipes for Velocity Issues (Bottlenecks)
+  links.forEach(l => {
+    const v = Math.abs(l.vel || 0);
+    const q = Math.abs(l.flow || 0); // m3/h
+    
+    // If velocity is too high (> 1.5 m/s) and it has significant flow
+    if (v > 1.5 && q > 0.01) {
+      issueCount++;
+      // Calculate ideal diameter for V = 1.0 m/s
+      // Q(m3/h) / 3600 = Q(m3/s). A = Q / V. D = sqrt(4A/pi) * 1000 for mm
+      const targetD_mm = Math.sqrt((4 * (q/3600)) / (Math.PI * 1.0)) * 1000;
+      
+      // Find the next standard pipe size that is >= target diameter
+      let recSize = PIPE_SIZES.find(s => s >= targetD_mm);
+      if(!recSize) recSize = PIPE_SIZES[PIPE_SIZES.length-1]; // Max size fallback
+      
+      // Prevent suggesting the same or smaller size due to rounding
+      if(recSize <= l.dia) {
+         let idx = PIPE_SIZES.indexOf(l.dia);
+         recSize = (idx !== -1 && idx < PIPE_SIZES.length-1) ? PIPE_SIZES[idx+1] : l.dia;
+      }
+
+      const isCrit = v > 2.5;
+      
+      html += `
+        <div class="advisor-card ${isCrit ? 'crit' : ''}">
+          <div class="adv-hdr">
+            <span class="adv-title"><i class="fas fa-tint"></i> ท่อคอขวด: ท่อขนาด ${l.dia}mm เล็กเกินไป</span>
+            <span class="badge ${isCrit ? 'badge-crit' : 'badge-fast'}">${v.toFixed(2)} m/s</span>
+          </div>
+          <div class="adv-desc">
+            มีอัตราไหลสูงถึง ${q.toFixed(2)} m³/h ทำให้ความเร็วทะลุเกณฑ์ เกิดแรงเสียดทาน (Head loss) สะสมในระบบสูงมาก
+            <br><strong style="color:#059669;">💡 คำแนะนำ:</strong> ขยายขนาดท่อเป็น <b>${recSize} mm</b> เพื่อให้ความเร็วลดลงเหลือประมาณ ~1.0 m/s
+          </div>
+          <div class="adv-actions">
+            <button class="btn-adv btn-adv-locate" onclick="locateElement('link', '${l.id}')"><i class="fas fa-crosshairs"></i> ชี้เป้าในแผนที่</button>
+            <button class="btn-adv btn-adv-fix" onclick="applyFix('link', '${l.id}', 'dia', ${recSize})"><i class="fas fa-wrench"></i> ขยายเป็น ${recSize}mm ทันที</button>
+          </div>
+        </div>
+      `;
+    }
+  });
+
+  // 2. Check Nodes for Low Pressure
+  nodes.forEach(n => {
+    if (['reservoir', 'tank'].includes(n.type)) return;
+    const p_bar = (n.p || 0) / 10.197;
+    if (p_bar < 0.5) {
+      issueCount++;
+      html += `
+        <div class="advisor-card ${p_bar <= 0 ? 'crit' : ''}">
+          <div class="adv-hdr">
+            <span class="adv-title"><i class="fas fa-tachometer-alt"></i> แรงดันตก: จุดต่อ ${TYPE_NAMES[n.type]||n.type}</span>
+            <span class="badge ${p_bar <= 0 ? 'badge-no-p' : 'badge-low-p'}">${p_bar.toFixed(2)} bar</span>
+          </div>
+          <div class="adv-desc">
+            จุดนี้แรงดันน้ำต่ำกว่ามาตรฐาน (0.5 bar) อาจทำให้น้ำไม่ไหลเข้าบ้านเรือนชั้น 2 
+            <br><strong style="color:#059669;">💡 คำแนะนำ:</strong> ตรวจสอบขยายท่อทางน้ำเข้า (Upstream) หรือเพิ่มระดับน้ำแหล่งจ่าย/ถังสูง
+          </div>
+          <div class="adv-actions">
+            <button class="btn-adv btn-adv-locate" onclick="locateElement('node', '${n.id}')"><i class="fas fa-crosshairs"></i> ชี้เป้าในแผนที่</button>
+          </div>
+        </div>
+      `;
+    }
+  });
+
+  if (issueCount === 0) {
+    html = `<div style="text-align:center;padding:30px 10px;color:#10b981;">
+              <i class="fas fa-check-circle" style="font-size:40px;margin-bottom:10px;"></i>
+              <div style="font-weight:800;font-size:14px;font-family:var(--sans);">ระบบอยู่ในเกณฑ์ดีมาก!</div>
+              <div style="font-size:11px;color:#475569;margin-top:5px;font-family:var(--sans);">ไม่พบปัญหาคอขวดหรือแรงดันตกในระบบตามเกณฑ์มาตรฐาน</div>
+            </div>`;
+  }
+
+  body.innerHTML = html;
+  document.getElementById('advisorModal').classList.add('show');
+}
+
+function locateElement(type, id) {
+  document.getElementById('advisorModal').classList.remove('show');
+  
+  // Clear previous highlight
+  if (activeHighlightLayer) {
+    if (activeHighlightLayer._path) activeHighlightLayer._path.classList.remove('map-item-highlight');
+    if (activeHighlightLayer._icon) activeHighlightLayer._icon.classList.remove('map-item-highlight');
+    activeHighlightLayer = null;
+  }
+
+  let layer = type === 'node' ? mapItems.m[id] : mapItems.p[id];
+  if (!layer) return;
+
+  activeHighlightLayer = layer;
+  
+  if (type === 'node') {
+    const n = nodes.find(x => x.id === id);
+    map.flyTo([n.lat, n.lng], 18, { animate: true, duration: 1 });
+    setTimeout(() => { if (layer._icon) layer._icon.classList.add('map-item-highlight'); }, 1000);
+  } else {
+    const l = links.find(x => x.id === id);
+    const n1 = nodes.find(x => x.id === l.s);
+    map.flyTo([(n1.lat), (n1.lng)], 17, { animate: true, duration: 1 }); // Center near start node
+    setTimeout(() => { if (layer._path) layer._path.classList.add('map-item-highlight'); }, 1000);
+  }
+  
+  // Open property panel automatically
+  setTimeout(() => openProp(id, type), 1200);
+  
+  // Remove highlight after 5 seconds
+  setTimeout(() => {
+     if (activeHighlightLayer) {
+        if (activeHighlightLayer._path) activeHighlightLayer._path.classList.remove('map-item-highlight');
+        if (activeHighlightLayer._icon) activeHighlightLayer._icon.classList.remove('map-item-highlight');
+     }
+  }, 5000);
+}
+
+async function applyFix(type, id, prop, newValue) {
+  if (type === 'link') {
+    const l = links.find(x => x.id === id);
+    if (l) l[prop] = newValue;
+  }
+  saveState();
+  
+  // Show calculating indicator in modal temporarily
+  document.getElementById('advisorBody').innerHTML = `<div style="text-align:center;padding:40px;"><i class="fas fa-spinner fa-spin" style="font-size:30px;color:#f59e0b;"></i><div style="margin-top:10px;font-family:var(--sans);font-weight:700;">กำลังปรับโครงข่ายและคำนวณใหม่...</div></div>`;
+  
+  // Recalculate
+  if(isEPSComputed) {
+    await calculate(); // Rerun full 24h EPS
+  } else {
+    _solveHydraulics(); // Just static calc
+    isCalculated = true;
+    render();
+  }
+  
+  // Re-open advisor to see updated list
+  setTimeout(() => {
+    openAdvisor();
+  }, 500);
+}
+
 function locate(){
   if(!navigator.geolocation) return alert("ไม่รองรับ GPS");
   log("กำลังค้นหาตำแหน่ง...");
