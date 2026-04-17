@@ -374,6 +374,7 @@
           <div style="font-size:9px;color:#64748b;font-family:var(--mono);margin-top:2px;" id="reportTimestamp"></div>
         </div>
         <div style="display:flex;gap:8px;">
+          <button onclick="generateAISummary()" style="background:linear-gradient(135deg, #8b5cf6, #6d28d9);border:none;color:white;border-radius:10px;padding:7px 14px;cursor:pointer;font-size:10px;font-weight:800;font-family:var(--sans);box-shadow:0 2px 8px rgba(139,92,246,0.4);"><i class="fas fa-magic"></i> ✨ AI สรุปผู้บริหาร</button>
           <button onclick="exportCSV()" style="background:rgba(251,191,36,0.15);border:1px solid rgba(251,191,36,0.3);color:#fbbf24;border-radius:10px;padding:7px 14px;cursor:pointer;font-size:10px;font-weight:800;font-family:var(--sans);"><i class="fas fa-file-csv"></i> CSV</button>
           <button onclick="closeReport()" style="width:32px;height:32px;border-radius:8px;background:rgba(255,255,255,0.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;"><i class="fas fa-times" style="color:#94a3b8;"></i></button>
         </div>
@@ -508,7 +509,7 @@ const TYPE_NAMES = {
 //  STATE
 // ============================================================
 let map, mode='select', nodes=[], links=[];
-let mapItems={m:{},p:{}};
+let mapItems={m:{}, p:{}, arrows:[]}; // OPTIMIZATION: track arrows separately
 let showRes=true, selId=null, isCalculated=false;
 let userLocMarker=null;
 let ctxPipeId=null, ctxLatLng=null;
@@ -517,21 +518,44 @@ let pipeGuideLine=null;
 let lastCalcStats={ iters:0, converged:false, maxRes:0 };
 
 // ============================================================
-//  UNDO / REDO
+//  UNDO / REDO (OPTIMIZED)
 // ============================================================
 let stateHistory=[], historyIndex=-1;
+
+// OPTIMIZATION: Strips out heavy 'history' arrays before saving state to avoid lag
+function stripHistoryForSave(arr) {
+  return arr.map(item => {
+    const copy = { ...item };
+    delete copy.history;
+    return copy;
+  });
+}
+
+function restoreHistory(arr) {
+  return arr.map(item => {
+    if(!item.history) {
+      if(item.type === 'pipe' || item.s) item.history = {flow:[], vel:[], hl:[], hf:[], hm:[]};
+      else item.history = {head:[], p:[], dem:[], wl:[]};
+    }
+    return item;
+  });
+}
+
 function saveState(){
   if(historyIndex<stateHistory.length-1) stateHistory=stateHistory.slice(0,historyIndex+1);
-  stateHistory.push(JSON.stringify({nodes,links}));
+  stateHistory.push(JSON.stringify({
+    nodes: stripHistoryForSave(nodes), 
+    links: stripHistoryForSave(links)
+  }));
   historyIndex++;
   if(stateHistory.length>60){stateHistory.shift();historyIndex--;}
   updateUndoRedoButtons();
 }
 function undo(){
-  if(historyIndex>0){historyIndex--;const s=JSON.parse(stateHistory[historyIndex]);nodes=s.nodes;links=s.links;isCalculated=false;isEPSComputed=false;render();updateUndoRedoButtons();}
+  if(historyIndex>0){historyIndex--;const s=JSON.parse(stateHistory[historyIndex]);nodes=restoreHistory(s.nodes);links=restoreHistory(s.links);isCalculated=false;isEPSComputed=false;render();updateUndoRedoButtons();}
 }
 function redo(){
-  if(historyIndex<stateHistory.length-1){historyIndex++;const s=JSON.parse(stateHistory[historyIndex]);nodes=s.nodes;links=s.links;isCalculated=false;isEPSComputed=false;render();updateUndoRedoButtons();}
+  if(historyIndex<stateHistory.length-1){historyIndex++;const s=JSON.parse(stateHistory[historyIndex]);nodes=restoreHistory(s.nodes);links=restoreHistory(s.links);isCalculated=false;isEPSComputed=false;render();updateUndoRedoButtons();}
 }
 function updateUndoRedoButtons(){
   const u=document.getElementById('btn-undo'),r=document.getElementById('btn-redo');
@@ -540,12 +564,11 @@ function updateUndoRedoButtons(){
 }
 
 // ============================================================
-//  MAP INIT & BOOT SEQUENCE (UPDATED)
+//  MAP INIT & BOOT SEQUENCE
 // ============================================================
 let appInitDone = false;
 function initApp() {
   if(appInitDone) return;
-  // Polling check to ensure external libraries are loaded before calling functions
   if (typeof L === 'undefined' || typeof Chart === 'undefined' || typeof LZString === 'undefined') {
     setTimeout(initApp, 50);
     return;
@@ -558,7 +581,7 @@ function initApp() {
 }
 
 document.addEventListener('DOMContentLoaded', initApp);
-window.addEventListener('load', initApp); // Fallback
+window.addEventListener('load', initApp); 
 
 function log(t){ const el=document.getElementById('st-msg'); if(el) el.innerText='⚡ '+t.toUpperCase(); }
 function warn(msg){
@@ -569,7 +592,8 @@ function warn(msg){
 }
 
 function initMap(){
-  map=L.map('map',{zoomControl:false,attributionControl:false,doubleClickZoom:false}).setView([14.4069,102.8686],15);
+  // OPTIMIZATION: preferCanvas: true gives massive performance boost for drawing many pipes
+  map=L.map('map',{zoomControl:false,attributionControl:false,doubleClickZoom:false, preferCanvas: true}).setView([14.4069,102.8686],15);
   const tiles=[
     {url:'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',opts:{maxZoom:19,subdomains:'abcd'}},
     {url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',opts:{maxZoom:19}},
@@ -580,16 +604,24 @@ function initMap(){
   addTile(0);
   map.on('click',(e)=>{document.getElementById('pipe-ctx-menu').classList.add('hidden');onMapClick(e);});
 
+  // OPTIMIZATION: Throttle mousemove using requestAnimationFrame
+  let isDrawingLine = false;
   map.on('mousemove', (e) => {
     if (mode === 'pipe' && startNodeId) {
-      const startNode = nodes.find(n => n.id === startNodeId);
-      if (startNode) {
-        const latlngs = [[startNode.lat, startNode.lng], [e.latlng.lat, e.latlng.lng]];
-        if (!pipeGuideLine) {
-          pipeGuideLine = L.polyline(latlngs, { color: '#3b82f6', weight: 4, dashArray: '6, 8', opacity: 0.7 }).addTo(map);
-        } else {
-          pipeGuideLine.setLatLngs(latlngs);
-        }
+      if(!isDrawingLine) {
+         isDrawingLine = true;
+         requestAnimationFrame(() => {
+           const startNode = nodes.find(n => n.id === startNodeId);
+           if (startNode) {
+             const latlngs = [[startNode.lat, startNode.lng], [e.latlng.lat, e.latlng.lng]];
+             if (!pipeGuideLine) {
+               pipeGuideLine = L.polyline(latlngs, { color: '#3b82f6', weight: 4, dashArray: '6, 8', opacity: 0.7 }).addTo(map);
+             } else {
+               pipeGuideLine.setLatLngs(latlngs);
+             }
+           }
+           isDrawingLine = false;
+         });
       }
     } else {
       if (pipeGuideLine) {
@@ -605,22 +637,41 @@ function forceMapFix(){ if(map) map.invalidateSize(); }
 function setMode(m){ mode=m; startNodeId=null; if(pipeGuideLine){ map.removeLayer(pipeGuideLine); pipeGuideLine=null; } document.querySelectorAll('.tool-card').forEach(el=>el.classList.remove('active')); const t=document.getElementById('t-'+m); if(t) t.classList.add('active'); closeProp(); }
 function toggleDrawer(){ document.getElementById('drawer').classList.toggle('open'); setTimeout(forceMapFix,400); }
 
-async function onMapClick(e){
+// OPTIMIZATION: Make map click asynchronous for rendering, so it doesn't freeze waiting for API
+function onMapClick(e){
   if(mode==='select'){closeProp();return;}
   if(['junction','tank','reservoir','pump'].includes(mode)){
-    log("กำลังดึงความสูง...");
-    let el=100;
-    try{ const r=await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${e.latlng.lat}&longitude=${e.latlng.lng}`); const d=await r.json(); if(d.elevation&&d.elevation[0]!==null) el=d.elevation[0]; }catch(err){}
     const id=mode[0].toUpperCase()+Date.now().toString().slice(-4);
+    
+    // Create node with default elevation first to prevent UI lag
     nodes.push({
-      id,type:mode,lat:e.latlng.lat,lng:e.latlng.lng,el,
+      id,type:mode,lat:e.latlng.lat,lng:e.latlng.lng,el:10, // Default 10
       baseDem:0, dem:0, head:0, p:0,
       status:'OPEN',setting:15.0,
-      waterLevel:20, tankDia:10, maxLevel:15, minLevel:0.5, // Added EPS Tank properties
+      waterLevel:20, tankDia:10, maxLevel:15, minLevel:0.5,
       pumpShutoff:45,pumpHead:30,pumpFlow:100,prvSize:100,openPercent:100,cvFlowAngle:0,cvBlocked:false,
-      history: { head:[], p:[], dem:[], wl:[] } // History arrays
+      history: { head:[], p:[], dem:[], wl:[] }
     });
-    saveState(); render(); log("Ready");
+    
+    saveState(); 
+    render(); // Render immediately
+    log("กำลังดึงความสูง...");
+
+    // Fetch elevation asynchronously in the background
+    fetch(`https://api.open-meteo.com/v1/elevation?latitude=${e.latlng.lat}&longitude=${e.latlng.lng}`)
+      .then(r => r.json())
+      .then(d => {
+        if(d.elevation && d.elevation[0] !== null) {
+          const n = nodes.find(x => x.id === id);
+          if(n) { 
+             n.el = d.elevation[0]; 
+             render(); // Update UI silently when data arrives
+             log("Ready"); 
+          }
+        }
+      }).catch(err => {
+        log("Ready (ใช้ความสูงค่าเริ่มต้น 10m)");
+      });
   }
 }
 
@@ -628,7 +679,7 @@ async function onMapClick(e){
 //  MATH: HAZEN-WILLIAMS & MINOR LOSS
 // ============================================================
 function hwResistance(len, dia_mm, c){
-  const D = Math.max(dia_mm, 1) / 1000;  // convert mm → m (prevent /0)
+  const D = Math.max(dia_mm, 1) / 1000;
   const C = Math.max(c, 50);
   const L = Math.max(len, 0.01);
   return 10.67 * L / (Math.pow(C, 1.852) * Math.pow(D, 4.8704));
@@ -679,10 +730,9 @@ async function calculate() {
   isEPSComputed = false;
   isCalculated = false;
 
-  // 1. Reset History & Set Initial States (t=0)
   nodes.forEach(n => {
     n.history = { head:[], p:[], dem:[], wl:[] };
-    n.baseDem = n.baseDem ?? n.dem; // Handle legacy saves
+    n.baseDem = n.baseDem ?? n.dem; 
     if(n.type==='tank') n.waterLevel = n.waterLevel || 5; 
   });
   links.forEach(l => {
@@ -693,10 +743,7 @@ async function calculate() {
   let allConverged = true;
   let lastMaxRes = 0;
 
-  // 2. Main EPS Loop (0 to 24)
   for (let t = 0; t <= EPS_HOURS; t++) {
-    
-    // --- A. Apply Time Patterns ---
     const patMult = PATTERN_DIURNAL[t] || 1.0;
     nodes.forEach(n => {
       if(!['reservoir','tank','pump'].includes(n.type)) {
@@ -704,13 +751,11 @@ async function calculate() {
       }
     });
 
-    // --- B. Solve Network Hydraulics for this Snapshot ---
     const stats = _solveHydraulics();
     totalIters += stats.iters;
     if(!stats.converged) allConverged = false;
     lastMaxRes = stats.maxRes;
 
-    // --- C. Save Results to History ---
     nodes.forEach(n => {
       n.history.head.push(n.head||0);
       n.history.p.push(n.p||0);
@@ -725,7 +770,6 @@ async function calculate() {
       l.history.hm.push(l.hm||0);
     });
 
-    // --- D. Update Tank Levels for NEXT Time Step (Euler Integration) ---
     if (t < EPS_HOURS) {
       nodes.filter(n=>n.type==='tank').forEach(tk => {
         let netFlow_m3h = 0;
@@ -735,7 +779,7 @@ async function calculate() {
         });
 
         const area = Math.PI * Math.pow((tk.tankDia||10)/2, 2);
-        const dV = netFlow_m3h * 1; // 1 hour dt
+        const dV = netFlow_m3h * 1; 
         const dH = dV / area;
 
         tk.waterLevel += dH;
@@ -744,11 +788,9 @@ async function calculate() {
       });
     }
 
-    // Yield to UI to prevent browser freeze
     await new Promise(r => setTimeout(r, 5));
   }
 
-  // 3. Finish
   lastCalcStats = { iters: Math.round(totalIters/25), converged: allConverged, maxRes: lastMaxRes };
   isEPSComputed = true;
   isCalculated = true;
@@ -761,19 +803,15 @@ async function calculate() {
   }, 2000);
 
   document.getElementById('epsPanel').classList.add('show');
-  
-  // Jump to peak hour or 0
   scrubEPS(0); 
   if(!allConverged) warn("⚠ EPS บางชั่วโมงไม่ Converge (ผลลัพธ์อาจคลาดเคลื่อน)");
   else log("วิเคราะห์ EPS เสร็จสิ้น ✓");
 }
 
-// Pure Math Solver (Extracted from old _doCalculate)
 function _solveHydraulics(){
   const sources = nodes.filter(n => ['reservoir','tank','pump'].includes(n.type));
   if(sources.length === 0) return {iters:0, converged:true, maxRes:0};
 
-  // Connectivity BFS
   const adj = {}; nodes.forEach(n => adj[n.id] = []);
   links.forEach(l => {
     const n1 = nodes.find(x=>x.id===l.s), n2 = nodes.find(x=>x.id===l.e);
@@ -788,7 +826,6 @@ function _solveHydraulics(){
   let hi = 0;
   while(hi < q.length){ const c=q[hi++]; (adj[c]||[]).forEach(nb=>{ if(!conn.has(nb)){conn.add(nb);q.push(nb);} }); }
 
-  // Initial Heads
   sources.forEach(s => {
     if(s.type === 'pump'){
       s.pumpShutoff = s.pumpShutoff || (s.pumpHead||30)*1.5;
@@ -803,7 +840,6 @@ function _solveHydraulics(){
     if(!['reservoir','tank','pump'].includes(n.type)) n.head = conn.has(n.id) ? n.el + 10 : n.el;
   });
 
-  // NR Loop
   const MAX_ITER = 1200;
   const TOL = 1e-6;
   let iters = 0, maxRes = 0, converged = false;
@@ -880,7 +916,6 @@ function _solveHydraulics(){
     iters = iter + 1;
   }
 
-  // Post process flows
   nodes.filter(n=>n.type==='check_valve').forEach(cv=>cv.cvBlocked=false);
   nodes.forEach(n => n.p = Math.max(0, n.head - n.el));
 
@@ -927,7 +962,6 @@ function scrubEPS(val) {
   currentTimeStep = parseInt(slider.value);
   document.getElementById('epsTimeLbl').innerText = currentTimeStep.toString().padStart(2,'0') + ':00';
   
-  // Extract data from history to active state for rendering
   nodes.forEach(n => {
     n.head = n.history.head[currentTimeStep];
     n.p = n.history.p[currentTimeStep];
@@ -961,7 +995,7 @@ function playEPS() {
       let next = currentTimeStep + 1;
       if(next > 24) { clearInterval(playInterval); isPlaying=false; btn.innerHTML=`<i class="fas fa-play"></i>`; }
       else scrubEPS(next);
-    }, 800); // 800ms per step
+    }, 800); 
   }
 }
 
@@ -1005,7 +1039,7 @@ function updateSummaryUI() {
 }
 
 // ============================================================
-//  RENDER
+//  RENDER (OPTIMIZED INCREMENTAL UPDATE)
 // ============================================================
 function computeCheckValveAngles(){
   nodes.filter(n=>n.type==='check_valve').forEach(cv=>{
@@ -1055,30 +1089,7 @@ function getNodeIcon(n){
   return `<div class="${isLowP?'node-alert':''}" style="display:flex;align-items:center;justify-content:center;"><div style="width:16px;height:16px;background:${dotColor};border:2.5px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3);"></div></div>`;
 }
 
-function render(){
-  if(!map) return;
-  for(let k in mapItems.p){ try{mapItems.p[k].unbindTooltip();map.removeLayer(mapItems.p[k]);}catch(e){} }
-  for(let k in mapItems.m){ try{mapItems.m[k].unbindTooltip();map.removeLayer(mapItems.m[k]);}catch(e){} }
-  mapItems={m:{},p:{}};
-
-  computeCheckValveAngles();
-
-  links.forEach(l=>{
-    const n1=nodes.find(n=>n.id===l.s), n2=nodes.find(n=>n.id===l.e);
-    if(!n1||!n2) return;
-    const color = pipeColor(l);
-    const weight = (Math.abs(l.flow)>0.001 && isCalculated) ? 6 : 4;
-    const poly = L.polyline([[n1.lat,n1.lng],[n2.lat,n2.lng]],{color,weight,opacity:0.88}).addTo(map);
-
-    if (isCalculated && Math.abs(l.flow) > 0.001) {
-      const pt1 = map.latLngToLayerPoint([n1.lat, n1.lng]);
-      const pt2 = map.latLngToLayerPoint([n2.lat, n2.lng]);
-      let angle = Math.atan2(pt2.y-pt1.y, pt2.x-pt1.x) * 180 / Math.PI;
-      if (l.flow < 0) angle += 180;
-      const arrowIcon = L.divIcon({ className: '', html: `<div style="transform: rotate(${angle}deg); display:flex; align-items:center; justify-content:center; width:100%; height:100%; pointer-events:none;"><svg width="14" height="14" viewBox="0 0 24 24" style="filter:drop-shadow(0 1px 2px rgba(0,0,0,0.3));"><polygon points="4,4 22,12 4,20" fill="${color}" stroke="#ffffff" stroke-width="2.5"/></svg></div>`, iconSize: [20, 20], iconAnchor: [10, 10] });
-      mapItems.p[l.id + '_arrow'] = L.marker([(n1.lat+n2.lat)/2, (n1.lng+n2.lng)/2], {icon: arrowIcon, interactive: false}).addTo(map);
-    }
-
+function buildPipeTooltip(l) {
     let tip = `<div style="text-align:left;font-family:var(--mono);">`;
     tip += `<b>Dia:</b> ${l.dia}mm  <b>C:</b> ${l.c}<br>`;
     tip += `<b>L:</b> ${l.len.toFixed(1)}m<br>`;
@@ -1091,17 +1102,10 @@ function render(){
       tip += `<b style="color:#f97316;">h_m:</b> ${(l.hm||0).toFixed(3)}m`;
     }
     tip += `</div>`;
+    return tip;
+}
 
-    poly.bindTooltip(tip,{permanent:showRes,direction:'top',offset:[0,-6],className:'custom-eng-tooltip'});
-    poly.on('click',(e)=>{ L.DomEvent.stopPropagation(e); ctxPipeId=l.id; ctxLatLng=e.latlng; const menu=document.getElementById('pipe-ctx-menu'); menu.style.left=e.originalEvent.pageX+'px'; menu.style.top=e.originalEvent.pageY+'px'; menu.classList.remove('hidden'); });
-    mapItems.p[l.id]=poly;
-  });
-
-  nodes.forEach(n=>{
-    const iconHtml = getNodeIcon(n);
-    const isSz = n.type==='tank'?[40,44]:n.type==='reservoir'?[40,36]:n.type==='pump'?[40,40]:n.type==='hydrant'?[32,38]:n.type==='air_valve'?[32,36]:n.type==='check_valve'?[46,32]:[30,30];
-    const m = L.marker([n.lat,n.lng],{icon:L.divIcon({className:'',html:iconHtml,iconSize:isSz,iconAnchor:[isSz[0]/2,isSz[1]/2]})}).addTo(map);
-
+function buildNodeTooltip(n) {
     let p_bar = 0;
     if(isCalculated && !['reservoir','tank'].includes(n.type)) p_bar=(n.p||0)/10.197;
     let nc = `<div style="text-align:left;font-family:var(--mono);">`;
@@ -1131,10 +1135,123 @@ function render(){
       nc+=`<b style="color:#059669;">Head:</b> ${(n.head||0).toFixed(2)}m`;
     }
     nc+=`</div>`;
-    if(nc) m.bindTooltip(nc,{permanent:showRes,direction:'right',offset:[24,0],className:'custom-eng-tooltip'});
-    m.on('click',(e)=>{ L.DomEvent.stopPropagation(e); document.getElementById('pipe-ctx-menu').classList.add('hidden'); if(mode==='pipe') handlePipe(n.id); else openProp(n.id,'node'); });
-    mapItems.m[n.id]=m;
+    return nc;
+}
+
+// OPTIMIZATION: Main rendering function heavily optimized for layer reuse
+function render(){
+  if(!map) return;
+  computeCheckValveAngles();
+
+  // 1. Clear old arrows securely
+  if(mapItems.arrows) {
+    mapItems.arrows.forEach(a => map.removeLayer(a));
+  }
+  mapItems.arrows = [];
+
+  // 2. Build sets of current IDs for fast lookup
+  const currentNodes = new Set(nodes.map(n => n.id));
+  const currentLinks = new Set(links.map(l => l.id));
+
+  // 3. Remove deleted items from map
+  for(let id in mapItems.m) {
+      if(!currentNodes.has(id)) { map.removeLayer(mapItems.m[id]); delete mapItems.m[id]; }
+  }
+  for(let id in mapItems.p) {
+      if(!currentLinks.has(id)) { map.removeLayer(mapItems.p[id]); delete mapItems.p[id]; }
+  }
+
+  // 4. Update or Create Links
+  links.forEach(l=>{
+    const n1=nodes.find(n=>n.id===l.s), n2=nodes.find(n=>n.id===l.e);
+    if(!n1||!n2) return;
+    const color = pipeColor(l);
+    const weight = (Math.abs(l.flow)>0.001 && isCalculated) ? 6 : 4;
+    const latlngs = [[n1.lat,n1.lng],[n2.lat,n2.lng]];
+    const tipStr = buildPipeTooltip(l);
+
+    if (mapItems.p[l.id]) {
+       // Update existing polyline
+       mapItems.p[l.id].setLatLngs(latlngs);
+       mapItems.p[l.id].setStyle({color, weight});
+       mapItems.p[l.id].setTooltipContent(tipStr);
+    } else {
+       // Create new polyline
+       const poly = L.polyline(latlngs, {color, weight, opacity:0.88}).addTo(map);
+       poly.bindTooltip(tipStr, {permanent: showRes, direction: 'top', offset: [0,-6], className: 'custom-eng-tooltip'});
+       poly.on('click', (e)=>{ L.DomEvent.stopPropagation(e); ctxPipeId=l.id; ctxLatLng=e.latlng; const menu=document.getElementById('pipe-ctx-menu'); menu.style.left=e.originalEvent.pageX+'px'; menu.style.top=e.originalEvent.pageY+'px'; menu.classList.remove('hidden'); });
+       mapItems.p[l.id] = poly;
+    }
+
+    // Always recreate flow arrows if flowing
+    if (isCalculated && Math.abs(l.flow) > 0.001) {
+      const pt1 = map.latLngToLayerPoint([n1.lat, n1.lng]);
+      const pt2 = map.latLngToLayerPoint([n2.lat, n2.lng]);
+      let angle = Math.atan2(pt2.y-pt1.y, pt2.x-pt1.x) * 180 / Math.PI;
+      if (l.flow < 0) angle += 180;
+      const arrowIcon = L.divIcon({ className: '', html: `<div style="transform: rotate(${angle}deg); display:flex; align-items:center; justify-content:center; width:100%; height:100%; pointer-events:none;"><svg width="14" height="14" viewBox="0 0 24 24" style="filter:drop-shadow(0 1px 2px rgba(0,0,0,0.3));"><polygon points="4,4 22,12 4,20" fill="${color}" stroke="#ffffff" stroke-width="2.5"/></svg></div>`, iconSize: [20, 20], iconAnchor: [10, 10] });
+      const arrowMarker = L.marker([(n1.lat+n2.lat)/2, (n1.lng+n2.lng)/2], {icon: arrowIcon, interactive: false}).addTo(map);
+      mapItems.arrows.push(arrowMarker);
+    }
   });
+
+  // 5. Update or Create Nodes
+  nodes.forEach(n=>{
+    const iconHtml = getNodeIcon(n);
+    const isSz = n.type==='tank'?[40,44]:n.type==='reservoir'?[40,36]:n.type==='pump'?[40,40]:n.type==='hydrant'?[32,38]:n.type==='air_valve'?[32,36]:n.type==='check_valve'?[46,32]:[30,30];
+    const iconObj = L.divIcon({className:'',html:iconHtml,iconSize:isSz,iconAnchor:[isSz[0]/2,isSz[1]/2]});
+    const nc = buildNodeTooltip(n);
+
+    if(mapItems.m[n.id]) {
+        // Update existing marker
+        mapItems.m[n.id].setLatLng([n.lat, n.lng]);
+        mapItems.m[n.id].setIcon(iconObj);
+        mapItems.m[n.id].setTooltipContent(nc);
+    } else {
+        // Create new marker
+        const m = L.marker([n.lat,n.lng],{icon: iconObj}).addTo(map);
+        if(nc) m.bindTooltip(nc,{permanent:showRes,direction:'right',offset:[24,0],className:'custom-eng-tooltip'});
+        m.on('click',(e)=>{ L.DomEvent.stopPropagation(e); document.getElementById('pipe-ctx-menu').classList.add('hidden'); if(mode==='pipe') handlePipe(n.id); else openProp(n.id,'node'); });
+        mapItems.m[n.id] = m;
+    }
+  });
+  
+  syncTooltipVisibility();
+}
+
+// Helper for changing tooltip visibility gracefully
+function syncTooltipVisibility() {
+    for(let key in mapItems.m) {
+        let m = mapItems.m[key];
+        if(m.getTooltip()) {
+           if(showRes && !map.hasLayer(m.getTooltip())) m.openTooltip();
+           else if(!showRes && map.hasLayer(m.getTooltip())) m.closeTooltip();
+        }
+    }
+    for(let key in mapItems.p) {
+        let p = mapItems.p[key];
+        if(p.getTooltip()) {
+           if(showRes && !map.hasLayer(p.getTooltip())) p.openTooltip();
+           else if(!showRes && map.hasLayer(p.getTooltip())) p.closeTooltip();
+        }
+    }
+}
+
+function toggleRes(){
+  showRes=!showRes;
+  const btn=document.getElementById('btn-res'),lbl=document.getElementById('btn-res-label');
+  if(showRes){btn.classList.add('active');if(lbl)lbl.innerText='ซ่อนป้าย';}
+  else{btn.classList.remove('active');if(lbl)lbl.innerText='แสดงป้าย';}
+  
+  // Cleanly rebind tooltips to update 'permanent' state safely across all browsers
+  for(let k in mapItems.m) {
+      const tip = mapItems.m[k].getTooltip()?.getContent();
+      if(tip) { mapItems.m[k].unbindTooltip(); mapItems.m[k].bindTooltip(tip, {permanent:showRes,direction:'right',offset:[24,0],className:'custom-eng-tooltip'}); }
+  }
+  for(let k in mapItems.p) {
+      const tip = mapItems.p[k].getTooltip()?.getContent();
+      if(tip) { mapItems.p[k].unbindTooltip(); mapItems.p[k].bindTooltip(tip, {permanent:showRes,direction:'top',offset:[0,-6],className:'custom-eng-tooltip'}); }
+  }
 }
 
 // ============================================================
@@ -1246,7 +1363,6 @@ function openProp(id, type){
       h+=`<div style="font-size:9px;color:#64748b;margin-top:4px;">*ผูกกับ Diurnal Pattern อัตโนมัติในโหมด EPS</div>`;
     }
   } else {
-    // Pipe properties
     const so = PIPE_SIZES.map(s=>`<option value="${s}" ${el.dia==s?'selected':''}>${s} mm</option>`).join('');
     const cc = el.c||150;
     const mm = MATERIALS.find(m=>m.c===cc);
@@ -1267,7 +1383,6 @@ function openProp(id, type){
   }
   box.innerHTML = h;
 
-  // Render Chart if EPS is computed
   const cb = document.getElementById('propChartBox');
   if(isEPSComputed) {
     cb.classList.remove('hidden');
@@ -1362,7 +1477,7 @@ async function saveProp(){
     if(c) el.c=parseFloat(c.value)||150;
   }
   saveState(); closeProp(); 
-  if(isEPSComputed) await calculate(); // Re-run EPS if already computed
+  if(isEPSComputed) await calculate(); 
   else { isCalculated=false; render(); }
 }
 function closeProp(){ document.getElementById('propPanel').classList.add('hidden'); selId=null; }
@@ -1450,7 +1565,6 @@ function openReport(){
   
   const body = document.getElementById('reportBody');
 
-  // Nodes table
   let html = `<h3 style="font-size:12px;font-weight:800;color:#0f172a;margin:0 0 10px;font-family:var(--sans);text-transform:uppercase;letter-spacing:0.08em;">📍 Node Results</h3>`;
   html += `<div style="overflow-x:auto;margin-bottom:24px;"><table class="report-table">
     <thead><tr><th>Type</th><th>Elev (m)</th><th>Demand</th><th>Head (m)</th><th>Pressure</th></tr></thead><tbody>`;
@@ -1465,7 +1579,6 @@ function openReport(){
   });
   html += `</tbody></table></div>`;
 
-  // Links table
   html += `<h3 style="font-size:12px;font-weight:800;color:#0f172a;margin:0 0 10px;font-family:var(--sans);text-transform:uppercase;letter-spacing:0.08em;">🔵 Pipe Results</h3>`;
   html += `<div style="overflow-x:auto;margin-bottom:24px;"><table class="report-table">
     <thead><tr><th>สถานะการไหล</th><th>Dia</th><th>C</th><th>L (m)</th><th>Q (m³/h)</th><th>V (m/s)</th><th>h_f (m)</th><th>h_m (m)</th></tr></thead><tbody>`;
@@ -1486,7 +1599,6 @@ function openReport(){
   });
   html += `</tbody></table></div>`;
 
-  // Solver info
   html += `<div style="background:#f8fafc;border-radius:12px;padding:12px;border:1px solid #e2e8f0;">
     <div style="font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px;font-family:var(--sans);">🔢 Solver Statistics</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px;font-family:var(--mono);">
@@ -1499,7 +1611,6 @@ function openReport(){
     </div>
   </div>`;
 
-  // Update header buttons to include AI Summary
   const hdrHtml = `
         <div>
           <div style="font-size:14px;font-weight:800;color:white;font-family:var(--sans);">📊 รายงานผลการวิเคราะห์ <span id="reportTimeStr" style="color:#fbbf24;font-size:12px;"></span></div>
@@ -1538,12 +1649,10 @@ async function fetchWithRetry(url, options, retries = 5) {
 async function generateAISummary() {
   if (!isCalculated) return warn("กรุณารันวิเคราะห์ระบบก่อนใช้งาน AI");
 
-  // Show AI modal / loading state
   const aiBody = document.getElementById('aiReportContent');
   document.getElementById('aiReportModal').classList.add('show');
   aiBody.innerHTML = '<div style="text-align:center;padding:50px;"><i class="fas fa-spinner fa-spin" style="font-size:40px;color:#8b5cf6;"></i><div style="margin-top:16px;font-weight:800;font-family:var(--sans);">✨ AI กำลังเขียนบทสรุปสำหรับผู้บริหาร...</div><div style="font-size:11px;color:#64748b;margin-top:4px;">Gemini กำลังวิเคราะห์ผลลัพธ์ของโครงข่ายท่อ</div></div>';
 
-  // Prepare data context for the LLM
   const jns = nodes.filter(n => !['reservoir','tank'].includes(n.type));
   const lowPressureNodes = jns.filter(n => (n.p/10.197) < 0.5).map(n => `ID: ${n.id} (${(n.p/10.197).toFixed(2)} bar)`).join(', ');
   const highVelPipes = links.filter(l => Math.abs(l.vel) > 1.5).map(l => `ID: ${l.id} (${Math.abs(l.vel).toFixed(2)} m/s, dia ${l.dia}mm)`).join(', ');
@@ -1585,7 +1694,6 @@ async function generateAISummary() {
     });
 
     const text = result.candidates?.[0]?.content?.parts?.[0]?.text || "เกิดข้อผิดพลาดในการดึงข้อมูลจาก AI";
-    // Convert Markdown to HTML using marked.js
     aiBody.innerHTML = marked.parse(text);
   } catch (e) {
     aiBody.innerHTML = `<div style="text-align:center;color:#ef4444;padding:30px;"><i class="fas fa-exclamation-triangle" style="font-size:30px;margin-bottom:10px;"></i><br><b>เกิดข้อผิดพลาดในการเชื่อมต่อ AI</b><br><span style="font-size:11px;">${e.message}</span></div>`;
@@ -1612,10 +1720,7 @@ function loadData(){
   try{ 
     const d=JSON.parse(localStorage.getItem(k)); 
     if(d&&d.nodes&&d.links){ 
-      nodes=d.nodes;links=d.links;saveState();
-      // Inject missing EPS properties for old saves
-      nodes.forEach(n => { n.history = n.history || { head:[], p:[], dem:[], wl:[] }; n.baseDem = n.baseDem ?? n.dem; });
-      links.forEach(l => { l.history = l.history || { flow:[], vel:[], hl:[], hf:[], hm:[] }; });
+      nodes=restoreHistory(d.nodes);links=restoreHistory(d.links);saveState();
       calculate().then(()=>{render();log("Loaded");});
     } 
   }
@@ -1637,14 +1742,14 @@ async function shareURL(){
     if(ok) alert("✅ คัดลอกลิงก์เรียบร้อย (Offline mode)"); else alert("ลิงก์: "+url);
   }catch(e){alert("เกิดข้อผิดพลาดในการสร้างลิงก์");}
 }
-window.loadDataFromCloud=function(n,l){ nodes=n;links=l;if(nodes.length>0&&map)map.setView([nodes[0].lat,nodes[0].lng],16);saveState();calculate().then(()=>{render();log("Loaded from Share");});};
+window.loadDataFromCloud=function(n,l){ nodes=restoreHistory(n);links=restoreHistory(l);if(nodes.length>0&&map)map.setView([nodes[0].lat,nodes[0].lng],16);saveState();calculate().then(()=>{render();log("Loaded from Share");});};
 function checkUrlHash(){
   if(!window.location.hash) return;
   try{
     let ds;
     if(window.location.hash.startsWith('#v2=')) ds=LZString.decompressFromEncodedURIComponent(window.location.hash.substring(4));
     else if(window.location.hash.length>5) ds=decodeURIComponent(atob(window.location.hash.substring(1)));
-    if(ds){const data=JSON.parse(ds);if(data&&data.nodes&&data.links){nodes=data.nodes;links=data.links;if(nodes.length>0&&map)map.setView([nodes[0].lat,nodes[0].lng],16);calculate().then(()=>render());window.history.replaceState(null,null,window.location.pathname);}}
+    if(ds){const data=JSON.parse(ds);if(data&&data.nodes&&data.links){nodes=restoreHistory(data.nodes);links=restoreHistory(data.links);if(nodes.length>0&&map)map.setView([nodes[0].lat,nodes[0].lng],16);calculate().then(()=>render());window.history.replaceState(null,null,window.location.pathname);}}
   }catch(e){console.warn(e);}
 }
 
@@ -1673,7 +1778,7 @@ function exportCSV(){
 }
 function exportJSON(){
   if(nodes.length===0) return alert("ไม่มีข้อมูลที่จะบันทึก");
-  const blob=new Blob([JSON.stringify({nodes,links,meta:{version:'pro_eps',date:new Date().toISOString()}},null,2)],{type:'application/json'});
+  const blob=new Blob([JSON.stringify({nodes:stripHistoryForSave(nodes),links:stripHistoryForSave(links),meta:{version:'pro_eps',date:new Date().toISOString()}},null,2)],{type:'application/json'});
   const url=URL.createObjectURL(blob);
   const a=document.createElement("a"); a.href=url; a.download=(document.getElementById('pjName').value||"pipe_project")+"_Backup.json"; a.click();
 }
@@ -1684,23 +1789,13 @@ function importFile(event){
     try{
       const data=JSON.parse(e.target.result);
       if(data.nodes&&data.links){ 
-        nodes=data.nodes;links=data.links;saveState();
+        nodes=restoreHistory(data.nodes);links=restoreHistory(data.links);saveState();
         if(nodes.length>0&&map)map.setView([nodes[0].lat,nodes[0].lng],16);
-        nodes.forEach(n => { n.history = n.history || { head:[], p:[], dem:[], wl:[] }; n.baseDem = n.baseDem ?? n.dem; });
-        links.forEach(l => { l.history = l.history || { flow:[], vel:[], hl:[], hf:[], hm:[] }; });
         calculate().then(()=>render());document.getElementById('pjName').value=file.name.replace('.json','').replace('_Backup',''); alert("✅ โหลดไฟล์สำเร็จ"); 
       }
     }catch(err){ alert("❌ รูปแบบไฟล์ไม่ถูกต้อง"); }
   };
   reader.readAsText(file); event.target.value='';
-}
-
-function toggleRes(){
-  showRes=!showRes;
-  const btn=document.getElementById('btn-res'),lbl=document.getElementById('btn-res-label');
-  if(showRes){btn.classList.add('active');if(lbl)lbl.innerText='ซ่อนป้าย';}
-  else{btn.classList.remove('active');if(lbl)lbl.innerText='แสดงป้าย';}
-  render();
 }
 
 // ============================================================
@@ -1717,23 +1812,16 @@ function openAdvisor() {
   let html = '';
   let issueCount = 0;
 
-  // 1. Check Pipes for Velocity Issues (Bottlenecks)
   links.forEach(l => {
     const v = Math.abs(l.vel || 0);
-    const q = Math.abs(l.flow || 0); // m3/h
+    const q = Math.abs(l.flow || 0);
     
-    // If velocity is too high (> 1.5 m/s) and it has significant flow
     if (v > 1.5 && q > 0.01) {
       issueCount++;
-      // Calculate ideal diameter for V = 1.0 m/s
-      // Q(m3/h) / 3600 = Q(m3/s). A = Q / V. D = sqrt(4A/pi) * 1000 for mm
       const targetD_mm = Math.sqrt((4 * (q/3600)) / (Math.PI * 1.0)) * 1000;
-      
-      // Find the next standard pipe size that is >= target diameter
       let recSize = PIPE_SIZES.find(s => s >= targetD_mm);
-      if(!recSize) recSize = PIPE_SIZES[PIPE_SIZES.length-1]; // Max size fallback
+      if(!recSize) recSize = PIPE_SIZES[PIPE_SIZES.length-1];
       
-      // Prevent suggesting the same or smaller size due to rounding
       if(recSize <= l.dia) {
          let idx = PIPE_SIZES.indexOf(l.dia);
          recSize = (idx !== -1 && idx < PIPE_SIZES.length-1) ? PIPE_SIZES[idx+1] : l.dia;
@@ -1760,7 +1848,6 @@ function openAdvisor() {
     }
   });
 
-  // 2. Check Nodes for Low Pressure
   nodes.forEach(n => {
     if (['reservoir', 'tank'].includes(n.type)) return;
     const p_bar = (n.p || 0) / 10.197;
@@ -1799,7 +1886,6 @@ function openAdvisor() {
 function locateElement(type, id) {
   document.getElementById('advisorModal').classList.remove('show');
   
-  // Clear previous highlight
   if (activeHighlightLayer) {
     if (activeHighlightLayer._path) activeHighlightLayer._path.classList.remove('map-item-highlight');
     if (activeHighlightLayer._icon) activeHighlightLayer._icon.classList.remove('map-item-highlight');
@@ -1818,14 +1904,12 @@ function locateElement(type, id) {
   } else {
     const l = links.find(x => x.id === id);
     const n1 = nodes.find(x => x.id === l.s);
-    map.flyTo([(n1.lat), (n1.lng)], 17, { animate: true, duration: 1 }); // Center near start node
+    map.flyTo([(n1.lat), (n1.lng)], 17, { animate: true, duration: 1 });
     setTimeout(() => { if (layer._path) layer._path.classList.add('map-item-highlight'); }, 1000);
   }
   
-  // Open property panel automatically
   setTimeout(() => openProp(id, type), 1200);
   
-  // Remove highlight after 5 seconds
   setTimeout(() => {
      if (activeHighlightLayer) {
         if (activeHighlightLayer._path) activeHighlightLayer._path.classList.remove('map-item-highlight');
@@ -1841,19 +1925,16 @@ async function applyFix(type, id, prop, newValue) {
   }
   saveState();
   
-  // Show calculating indicator in modal temporarily
   document.getElementById('advisorBody').innerHTML = `<div style="text-align:center;padding:40px;"><i class="fas fa-spinner fa-spin" style="font-size:30px;color:#f59e0b;"></i><div style="margin-top:10px;font-family:var(--sans);font-weight:700;">กำลังปรับโครงข่ายและคำนวณใหม่...</div></div>`;
   
-  // Recalculate
   if(isEPSComputed) {
-    await calculate(); // Rerun full 24h EPS
+    await calculate(); 
   } else {
-    _solveHydraulics(); // Just static calc
+    _solveHydraulics(); 
     isCalculated = true;
     render();
   }
   
-  // Re-open advisor to see updated list
   setTimeout(() => {
     openAdvisor();
   }, 500);
@@ -1901,16 +1982,13 @@ function locate(){
       }
     };
 
-    // Trigger initial auth
     initAuth();
     
-    // Monitor auth state changes
     onAuthStateChanged(auth, (user) => { 
       currentUser = user; 
     });
 
     window.shareProjectToCloud = async (nd, lk) => {
-      // 1. ตรวจสอบ Auth เสมอตามกฏ
       if (!currentUser) await initAuth();
       if (!currentUser) return alert("❌ ไม่สามารถยืนยันตัวตนกับระบบ Cloud ได้");
 
@@ -1918,10 +1996,9 @@ function locate(){
       try {
         const sid = 'pj_' + Date.now().toString(36) + Math.random().toString(36).substr(2,4);
         
-        // 2. ใช้ path โครงสร้าง /artifacts/{appId}/public/data/... เท่านั้น
         await setDoc(doc(db, 'artifacts', aId, 'public', 'data', 'shared_projects', sid), {
-          nodes: nd,
-          links: lk,
+          nodes: stripHistoryForSave(nd),
+          links: stripHistoryForSave(lk),
           timestamp: new Date().toISOString()
         });
         
@@ -1941,7 +2018,6 @@ function locate(){
       const sp = new URLSearchParams(window.location.search).get('share');
       if (!sp) return;
 
-      // 1. ตรวจสอบ Auth เสมอตามกฏ
       if (!currentUser) await initAuth();
       if (!currentUser) return;
 
@@ -1962,7 +2038,6 @@ function locate(){
       window.history.replaceState(null, null, window.location.pathname);
     };
 
-    // เรียกโหลดโปรเจกต์อัตโนมัติหากมีพารามิเตอร์ส่งมา
     window.loadSharedProjectCloud();
   }
 </script>
