@@ -182,8 +182,6 @@
     <button class="ctx-menu-item" onclick="insertAcc('valve')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><line x1="6" y1="6" x2="6" y2="18" stroke="#22c55e" stroke-width="3" stroke-linecap="round"/><line x1="18" y1="6" x2="18" y2="18" stroke="#22c55e" stroke-width="3" stroke-linecap="round"/><circle cx="12" cy="12" r="5" fill="white" stroke="#22c55e" stroke-width="2"/></svg>ประตูน้ำ (Gate Valve)</button>
     <button class="ctx-menu-item" onclick="insertAcc('prv')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="1" y="9" width="8" height="6" rx="2" fill="#f97316"/><rect x="15" y="9" width="8" height="6" rx="2" fill="#f97316"/><circle cx="12" cy="12" r="4" fill="#fff7ed" stroke="#f97316" stroke-width="1.5"/><text x="12" y="15.5" text-anchor="middle" font-size="6" font-weight="900" fill="#f97316">P</text></svg>PRV (ลดแรงดัน)</button>
     <button class="ctx-menu-item" style="color:#0d9488;" onclick="insertAcc('check_valve')"><svg width="16" height="16" viewBox="0 0 32 22"><rect x="0" y="8" width="8" height="6" rx="1.5" fill="#0d9488"/><rect x="24" y="8" width="8" height="6" rx="1.5" fill="#0d9488"/><rect x="7" y="3" width="18" height="16" rx="3" fill="#ccfbf1" stroke="#0d9488" stroke-width="1.5"/><polygon points="15,6 23,11 15,16" fill="#0d9488"/></svg>เช็ควาล์ว (Check Valve)</button>
-    <button class="ctx-menu-item" onclick="insertAcc('air_valve')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="7" y="11" width="10" height="9" rx="2" fill="#0891b2"/><path d="M9 11L9 7Q12 4 15 7L15 11" fill="none" stroke="#06b6d4" stroke-width="2" stroke-linecap="round"/></svg>แอร์วาล์ว (Air Valve)</button>
-    <button class="ctx-menu-item" onclick="insertAcc('hydrant')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="8" y="10" width="8" height="10" rx="1" fill="#dc2626"/><rect x="5" y="14" width="14" height="4" rx="1" fill="#ef4444"/><path d="M10 10V8a2 2 0 0 1 4 0v2" stroke="#dc2626" stroke-width="1.5"/></svg>หัวดับเพลิง (Hydrant)</button>
   </div>
 
   <!-- DRAWER -->
@@ -370,13 +368,32 @@
     </div>
   </div>
 
+  <!-- PIPE SIZE SELECTOR MODAL (NEW) -->
+  <div id="pipeSelectModal" class="modal-overlay" style="z-index: 5000;">
+    <div class="modal-box" style="max-width:320px; border-radius: 20px;">
+      <div class="modal-hdr" style="background:linear-gradient(135deg,#2563eb,#1d4ed8); padding: 16px 20px;">
+        <div style="font-size:14px;font-weight:800;color:white;font-family:var(--sans);">🔵 เลือกขนาดท่อที่จะวาด</div>
+      </div>
+      <div class="modal-body" style="padding: 20px; display: flex; flex-direction: column; gap: 16px;">
+        <div>
+          <label style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;display:block;margin-bottom:8px;font-family:var(--sans);">ขนาดเส้นผ่านศูนย์กลาง (mm)</label>
+          <select id="newPipeSize" class="eng-input" style="font-size: 14px; padding: 12px;"></select>
+        </div>
+        <div style="display:flex; gap: 10px;">
+          <button onclick="confirmPipeMode()" style="flex:1; background:var(--primary);color:white;padding:12px;border-radius:12px;font-size:12px;font-weight:800;border:none;cursor:pointer;font-family:var(--sans);">ยืนยันและเริ่มวาด</button>
+          <button onclick="cancelPipeMode()" style="flex:1; background:#f1f5f9;color:#475569;padding:12px;border-radius:12px;font-size:12px;font-weight:800;border:none;cursor:pointer;font-family:var(--sans);">ยกเลิก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="st-msg">⚡ READY</div>
 </div>
 
 <script>
 // ╔══════════════════════════════════════════════════════════════╗
-// ║  PIPE-JS PRO — PRODUCTION REFACTOR                         ║
-// ║  Architecture: Geometry Layer ⟹ Simulation Layer           ║
+// ║  PIPE-JS PRO — PRODUCTION REFACTOR                           ║
+// ║  Architecture: Geometry Layer ⟹ Simulation Layer            ║
 // ║  Hydraulics ONLY execute on explicit RUN                    ║
 // ╚══════════════════════════════════════════════════════════════╝
 
@@ -385,13 +402,14 @@
 // ============================================================
 const apiKey = ""; // Gemini API Key (injected at runtime)
 
-const PIPE_SIZES = [15,20,25,32,40,50,65,80,100,150,200,250,300,350,400,450,500,600,700];
+// ADDED: 225mm pipe size to the array
+const PIPE_SIZES = [15,20,25,32,40,50,65,80,100,150,200,225,250,300,350,400,450,500,600,700];
 const MATERIALS = [
   {id:'pvc',    name:'PVC / PE (พลาสติก)',         c:150, desc:'ท่อผิวเรียบ แรงเสียดทานต่ำมาก'},
   {id:'steel',  name:'Steel (เหล็กใหม่)',           c:130, desc:'ท่อเหล็กเหนียวใหม่'},
   {id:'di',     name:'Ductile Iron (หล่อเหนียว)',  c:120, desc:'ท่อเหล็กหล่อบุซีเมนต์'},
   {id:'concrete',name:'Concrete (คอนกรีต)',        c:110, desc:'ท่อซีเมนต์หรือคอนกรีต'},
-  {id:'galv',   name:'Galvanized (สังกะสี)',        c:100, desc:'ท่อเหล็กอาบสังกะสี (ผ่านใช้)'}
+  {id:'galv',   name:'Galvanized (สังกะสี)',       c:100, desc:'ท่อเหล็กอาบสังกะสี (ผ่านใช้)'}
 ];
 
 /** Minor Loss Coefficients (dimensionless) */
@@ -475,9 +493,9 @@ const TYPE_NAMES = {
 /**
  * Node schema:
  * { id, type, lat, lng, el, baseDem,
- *   status, setting, waterLevel, tankDia, maxLevel, minLevel,
- *   pumpShutoff, pumpHead, pumpFlow, prvSize, openPercent,
- *   cvFlowAngle, cvBlocked, history }
+ * status, setting, waterLevel, tankDia, maxLevel, minLevel,
+ * pumpShutoff, pumpHead, pumpFlow, prvSize, openPercent,
+ * cvFlowAngle, cvBlocked, history }
  *
  * NOTE: dem, head, p are SIMULATION RESULTS written by the solver
  * and kept on the node for display only — never used as inputs.
@@ -486,7 +504,7 @@ const TYPE_NAMES = {
 /**
  * Link schema:
  * { id, s, e, len, dia, mat, c,
- *   flow, vel, hl, hf, hm, re, history }
+ * flow, vel, hl, hf, hm, re, history }
  */
 
 let nodes = []; // Geometry + display results
@@ -566,40 +584,6 @@ function _adjRemoveLink(l) {
 function findNearestNode(latlng, pixelTolerance) {
   if (!map) return null;
   const center = map.latLngToLayerPoint(latlng);
-  let best = null, bestDist = Infinity;
-
-  // Search a 3×3 grid neighborhood around the click cell
-  const col0 = Math.floor(latlng.lng / GRID_CELL_DEG);
-  const row0 = Math.floor(latlng.lat / GRID_CELL_DEG);
-
-  for (let dc = -2; dc <= 2; dc++) {
-    for (let dr = -2; dr <= 2; dr++) {
-      const key = `${col0 + dc},${row0 + dr}`;
-      const cell = nodeGrid.get(key);
-      if (!cell) continue;
-      for (const nid of cell) {
-        const n = nodeMap.get(nid);
-        if (!n) continue;
-        const pt = map.latLngToLayerPoint([n.lat, n.lng]);
-        const d = Math.hypot(pt.x - center.x, pt.y - center.y);
-        if (d < best_Dist && d < pixelTolerance) {
-          bestDist = d;
-          best = nid;
-        }
-      }
-    }
-  }
-  return best;
-}
-
-// Fix typo in variable name
-// eslint-disable-next-line no-unused-vars
-var best_Dist = Infinity; // helper alias (not used — see closure below)
-
-// Corrected findNearestNode (inline best):
-function findNearestNode(latlng, pixelTolerance) {
-  if (!map) return null;
-  const center = map.latLngToLayerPoint(latlng);
   let bestId = null, bestDist = pixelTolerance; // threshold = tolerance
 
   const col0 = Math.floor(latlng.lng / GRID_CELL_DEG);
@@ -646,6 +630,7 @@ let selId = null;
 // and are FROZEN until the second click. They cannot be mutated by background ops.
 let startNodeId = null;    // frozen node ID for pipe start
 let pipeGuideLine = null;  // Leaflet guide polyline
+let activeDrawPipeSize = 100; // ADDED: Global state for pipe size from modal
 
 let ctxPipeId = null;
 let ctxLatLng = null;
@@ -831,7 +816,32 @@ function initMap() {
 
 function forceMapFix() { if (map) map.invalidateSize(); }
 
+// ADDED/MODIFIED: Intercept setMode for 'pipe' to show modal first
 function setMode(m) {
+  if (m === 'pipe') {
+    // Populate select
+    const sel = document.getElementById('newPipeSize');
+    sel.innerHTML = PIPE_SIZES.map(s => `<option value="${s}" ${s === activeDrawPipeSize ? 'selected' : ''}>${s} mm</option>`).join('');
+    document.getElementById('pipeSelectModal').classList.add('show');
+    return; // Wait for user to confirm
+  }
+  _executeSetMode(m);
+}
+
+function confirmPipeMode() {
+  activeDrawPipeSize = parseInt(document.getElementById('newPipeSize').value) || 100;
+  document.getElementById('pipeSelectModal').classList.remove('show');
+  _executeSetMode('pipe');
+}
+
+function cancelPipeMode() {
+  document.getElementById('pipeSelectModal').classList.remove('show');
+  // Revert UI to 'select' if they cancel
+  if(mode !== 'pipe') _executeSetMode(mode); 
+  else _executeSetMode('select');
+}
+
+function _executeSetMode(m) {
   mode = m;
   // Cancel any in-progress pipe drawing
   startNodeId = null;
@@ -925,7 +935,7 @@ function _addLink(startId, endId, dia, c, mat) {
   const l = {
     id, s: startId, e: endId,
     len: Math.max(len, 0.01),
-    dia: dia ?? 100,
+    dia: dia ?? 100, // Will use passed activeDrawPipeSize
     mat: mat ?? 'pvc',
     c: c ?? 150,
     flow: 0, vel: 0, hl: 0, hf: 0, hm: 0, re: 0,
@@ -1037,7 +1047,8 @@ function handlePipe(clickedNodeId) {
     return;
   }
 
-  _addLink(frozenStart, clickedNodeId);
+  // MODIFIED: Pass activeDrawPipeSize from the modal
+  _addLink(frozenStart, clickedNodeId, activeDrawPipeSize);
   // Reset calculation state — results are now stale
   isCalculated = false;
   isEPSComputed = false;
@@ -1088,7 +1099,7 @@ function valveKFactor(openPercent) {
  * at end-node accessories (valves, check valves, etc.)
  */
 function pipeResistance(link, nodeS, nodeE) {
-  const C   = link.c   || 150;
+  const C   = link.c  || 150;
   const dia = link.dia || 100;
   const R_hw = hwResistance(link.len, dia, C);
 
@@ -1466,7 +1477,7 @@ function _solveHydraulics() {
 
     l.flow = Q_m3s * 3600 * sign;  // m³/h
     l.vel  = (Q_m3s / A) * sign;   // m/s (signed: positive = n1→n2)
-    l.hl   = aH;                    // total head loss (m)
+    l.hl   = aH;                   // total head loss (m)
     l.hf   = hwResistance(l.len, l.dia || 100, C) * Math.pow(Q_m3s, 1.852); // friction only
     l.hm   = Math.max(0, aH - l.hf); // minor loss residual
     l.re   = Math.abs(l.vel) * D / 1e-6; // Reynolds number (ν_water ≈ 1×10⁻⁶ m²/s)
@@ -1719,7 +1730,7 @@ function render() {
     const n1 = nodeMap.get(l.s), n2 = nodeMap.get(l.e);
     if (!n1 || !n2) return;
 
-    const color   = pipeColor(l);
+    const color  = pipeColor(l);
     const weight  = (Math.abs(l.flow) > 0.001 && isCalculated) ? 6 : 4;
     const latlngs = [[n1.lat, n1.lng], [n2.lat, n2.lng]];
     const tipStr  = buildPipeTooltip(l);
