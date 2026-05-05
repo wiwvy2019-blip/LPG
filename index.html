@@ -74,7 +74,9 @@
     @keyframes cv-block   { 0%{opacity:1} 50%{opacity:0.3} 100%{opacity:1} }
     @keyframes cv-flow    { 0%{opacity:0;transform:translateX(-4px)} 60%{opacity:1} 100%{opacity:0;transform:translateX(4px)} }
     @keyframes pulse-in   { 0%{opacity:0;transform:scale(0.92)} 100%{opacity:1;transform:scale(1)} }
+    @keyframes pressure-blink { 0%{box-shadow:0 0 0 0 rgba(239,68,68,0.9);opacity:1} 50%{box-shadow:0 0 0 8px rgba(239,68,68,0);opacity:0.5} 100%{box-shadow:0 0 0 0 rgba(239,68,68,0.9);opacity:1} }
     .node-alert > div { animation:alert-glow 1.5s infinite;background-color:#ef4444 !important; }
+    .node-critical-blink > div { animation:pressure-blink 0.9s infinite !important;background-color:#ef4444 !important; }
     .user-marker-pulse { animation:user-glow 2s infinite; }
     .cv-blocked .cv-cross { animation:cv-block 0.8s infinite; }
     .cv-arrow-ani { animation:cv-flow 1.2s infinite; }
@@ -1621,14 +1623,38 @@ function pipeColor(l) {
 
 function getNodeIcon(n) {
   let dotColor = (n.dem || 0) > 0 ? '#dc2626' : '#3b82f6';
-  let isLowP = false;
+  let wrapClass = '';
+
   if (isCalculated && !['reservoir','tank'].includes(n.type)) {
     const pbar = (n.p || 0) / 10.197;
-    if (pbar <= 0)   { dotColor = '#374151'; isLowP = true; }
-    else if (pbar <= 0.5) { dotColor = '#ef4444'; isLowP = true; }
-    else if (pbar < 1.0)  { dotColor = '#f97316'; }
-    else                  { dotColor = '#22c55e'; }
+
+    if (pbar <= 0) {
+      // ไม่มีแรงดัน — สีเทาเข้ม กระพริบแดง
+      dotColor = '#ef4444';
+      wrapClass = 'node-critical-blink';
+    } else if (pbar < 0.2) {
+      // วิกฤต: < 0.2 บาร์ — กระพริบแดง
+      dotColor = '#ef4444';
+      wrapClass = 'node-critical-blink';
+    } else if (pbar < 0.5) {
+      // เตือน: 0.2–0.5 บาร์ — ไล่สีตามความรุนแรง (ไม่กระพริบ)
+      // 0.2 → แดงเข้ม, 0.35 → ส้ม, 0.49 → เหลืองส้ม
+      const t = (pbar - 0.2) / (0.5 - 0.2); // 0.0 ถึง 1.0
+      if (t < 0.33) {
+        dotColor = '#dc2626'; // แดงเข้ม (0.2–0.3 บาร์)
+      } else if (t < 0.66) {
+        dotColor = '#f97316'; // ส้ม (0.3–0.4 บาร์)
+      } else {
+        dotColor = '#fbbf24'; // เหลืองส้ม (0.4–0.5 บาร์)
+      }
+      wrapClass = '';
+    } else {
+      // ปกติ: ≥ 0.5 บาร์ — สีเขียว
+      dotColor = '#22c55e';
+      wrapClass = '';
+    }
   }
+
   if (n.type === 'tank')        return `<div class="node-svg-wrap">${SVG.tank}</div>`;
   if (n.type === 'reservoir')   return `<div class="node-svg-wrap">${SVG.reservoir}</div>`;
   if (n.type === 'pump')        return `<div class="node-svg-wrap">${SVG.pump}</div>`;
@@ -1642,7 +1668,7 @@ function getNodeIcon(n) {
     if (pct < 100)   return `<div class="node-svg-wrap">${SVG.valve_partial}</div>`;
     return `<div class="node-svg-wrap">${SVG.valve_open}</div>`;
   }
-  return `<div class="${isLowP ? 'node-alert' : ''}" style="display:flex;align-items:center;justify-content:center;"><div style="width:16px;height:16px;background:${dotColor};border:2.5px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3);"></div></div>`;
+  return `<div class="${wrapClass}" style="display:flex;align-items:center;justify-content:center;"><div style="width:16px;height:16px;background:${dotColor};border:2.5px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3);"></div></div>`;
 }
 
 function buildPipeTooltip(l) {
