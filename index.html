@@ -1,149 +1,170 @@
-<!-- ... existing code ... -->
-<script>
-// ... existing code ...
-
-// ค้นหาฟังก์ชัน calculateNetwork ของเดิมและแทนที่ด้วยบล็อกนี้ทั้งหมด
-window.calculateNetwork = () => {
-  try {
-    if (typeof log === 'function') log("CALCULATING WITH WILHELM ENGINE...");
-    if (nodes.length === 0) {
-        alert("❌ ไม่มีโหนดในระบบให้คำนวณ");
-        if (typeof log === 'function') log("READY");
-        return;
-    }
-
-    const maxIter = 1000;
-    const tolerance = 0.001;
-    const nodeMap = new Map();
-
-    // 1. กำหนดค่าเริ่มต้นและแปลงหน่วย (m และ m3/s)
-    nodes.forEach(n => {
-      const elev = parseFloat(n.elevation || 0);
-      
-      // ถังเก็บน้ำหรือแหล่งน้ำ (Fix Grade Nodes)
-      if (n.type === 'Reservoir' || n.type === 'Tank') {
-        const wl = parseFloat(n.waterLevel || 0);
-        n.head = elev + wl; // Head = Elevation + ระดับน้ำ
-        n.isFixed = true;
-      } else {
-        // Junction หรือโหนดใช้น้ำ
-        n.head = elev + 10; // สมมติฐานค่าเริ่มต้น (Initial Guess)
-        n.isFixed = false;
-      }
-      
-      // แปลง Demand จาก L/s เป็น m3/s (รองรับทั้งตัวแปร baseDemand และ demand)
-      const d = n.baseDemand !== undefined ? n.baseDemand : n.demand;
-      n.demandM3s = parseFloat(d || 0) / 1000;
-      nodeMap.set(n.id, n);
-    });
-
-    // 2. คำนวณความต้านทานท่อ (Resistance) ด้วย Hazen-Williams
-    links.forEach(l => {
-      const d_m = parseFloat(l.diameter || 150) / 1000; // แปลง mm เป็น m
-      const len = parseFloat(l.length || 100);
-      const c = parseFloat(l.roughness || 130);
-      
-      // สูตร: R = 10.67 * L / (C^1.852 * D^4.8704)
-      l.R = (10.67 * len) / (Math.pow(c, 1.852) * Math.pow(d_m, 4.8704));
-      l.flowM3s = 0;
-    });
-
-    // 3. เริ่มการคำนวณแบบวนซ้ำ (Newton-Raphson Solver)
-    let iter = 0;
-    let maxError = Infinity;
-
-    while (iter < maxIter && maxError > tolerance) {
-      maxError = 0;
-
-      // ล้างค่าสมดุลมวลน้ำแต่ละโหนด
-      nodes.forEach(n => {
-        n.sumQ = -n.demandM3s; // น้ำที่ถูกดึงออก
-        n.sumdQdH = 0;         // ผลรวมอนุพันธ์
-      });
-
-      // คำนวณ Flow และ Derivative จาก Head ของรอบปัจจุบัน
-      links.forEach(l => {
-        const n1 = nodeMap.get(l.source);
-        const n2 = nodeMap.get(l.target);
-        if (!n1 || !n2) return;
-
-        const dH = n1.head - n2.head;
-        const absDH = Math.abs(dH);
-        let Q, dQdH;
-
-        if (absDH < 1e-6) {
-          Q = 0; 
-          dQdH = 0;
-        } else {
-          // Q = (hf/R)^(1/1.852)
-          Q = Math.pow(absDH / l.R, 1 / 1.852) * Math.sign(dH);
-          // อนุพันธ์ dQ/dH
-          dQdH = (1 / 1.852) * (Math.abs(Q) / absDH);
-        }
-
-        l.flowM3s = Q;
-
-        // สะสมค่าเข้าโหนด (Continuity Equation)
-        if (!n1.isFixed) { n1.sumQ -= Q; n1.sumdQdH += dQdH; }
-        if (!n2.isFixed) { n2.sumQ += Q; n2.sumdQdH += dQdH; }
-      });
-
-      // ปรับแก้ค่า Head ของโหนดเพื่อลด Error
-      let currentIterMaxError = 0;
-      nodes.forEach(n => {
-        if (!n.isFixed && n.sumdQdH > 0) {
-          let deltaH = n.sumQ / n.sumdQdH;
-          // Dampening: ป้องกัน Head แกว่งเกินไป (สูงสุด +-10m ต่อรอบ)
-          deltaH = Math.max(-10, Math.min(10, deltaH));
-          n.head += deltaH;
-          currentIterMaxError = Math.max(currentIterMaxError, Math.abs(deltaH));
-        }
-      });
-      maxError = currentIterMaxError;
-      iter++;
-    }
-
-    // 4. สรุปผล (Post-processing)
-    nodes.forEach(n => {
-      // ✅ จุดสำคัญ: Pressure = Total Head - Elevation
-      n.pressure = n.head - parseFloat(n.elevation || 0); 
-    });
-
-    links.forEach(l => {
-      const d_m = parseFloat(l.diameter || 150) / 1000;
-      const area = (Math.PI * Math.pow(d_m, 2)) / 4;
-      
-      l.flow = l.flowM3s * 1000; // แปลง Flow กลับเป็น L/s สำหรับโชว์บน UI
-      l.velocity = Math.abs(l.flowM3s) / area; // m/s
-      
-      const h1 = nodeMap.get(l.source).head;
-      const h2 = nodeMap.get(l.target).head;
-      l.headloss = Math.abs(h1 - h2);
-    });
-
-    // 5. ส่งผลลัพธ์กลับไปยัง UI ตัวเดิมของคุณ
-    const simStatus = `[Wilhelm Engine] Converged in ${iter} Iterations (Error: ${maxError.toFixed(6)})`;
-    if (typeof log === 'function') log("READY");
-    
-    // อัปเดตกราฟิกและตาราง
-    if (typeof saveHistory === 'function') saveHistory();
-    if (typeof renderNetwork === 'function') renderNetwork();
-    
-    if (typeof selectedItem !== 'undefined' && selectedItem && typeof updatePropertiesPanel === 'function') {
-      updatePropertiesPanel(selectedItem.type, selectedItem.data);
-    }
-    
-    if (typeof updateResultsPanel === 'function') {
-      updateResultsPanel(simStatus);
-    }
-
-  } catch (err) {
-    console.error(err);
-    alert("❌ เกิดข้อผิดพลาดในระบบคำนวณ (Engine Error): " + err.message);
-    if (typeof log === 'function') log("READY");
+/**
+ * ฟังก์ชันคำนวณทางชลศาสตร์ (Henzen-GGA Newton-Raphson Method)
+ * นำฟังก์ชันนี้ไปวางแทนที่ฟังก์ชันคำนวณเดิมในไฟล์ของคุณได้เลย
+ * * @param {Array} sysNodes - Array ของข้อมูลจุดต่อและแหล่งน้ำ
+ * @param {Array} sysLinks - Array ของข้อมูลเส้นท่อ
+ * @returns {Boolean} - คืนค่า true หากคำนวณสำเร็จ
+ */
+function solveHydraulics(sysNodes, sysLinks) {
+  if (!sysNodes || sysNodes.length === 0 || !sysLinks || sysLinks.length === 0) {
+    alert("ไม่มีข้อมูลเครือข่ายท่อให้คำนวณ");
+    return false;
   }
-};
+  
+  const HW_EXP = 1.852;
+  const HW_COEFF = 10.67;
+  const MAX_ITER = 2000;
+  const TOLERANCE = 0.0001; // ความคลาดเคลื่อนที่ยอมรับได้ (m3/s)
 
-// ... existing code ...
-</script>
-<!-- ... existing code ... -->
+  // 1. เตรียมข้อมูลและดักจับชื่อตัวแปรให้เข้ากับโค้ดดั้งเดิม
+  let nodeMap = {};
+  let hasReservoir = false;
+
+  sysNodes.forEach(n => {
+    // รองรับชื่อ Property หลายรูปแบบ
+    let elev = parseFloat(n.elevation ?? n.z) || 0;
+    let dem_Lps = parseFloat(n.demand ?? n.q) || 0;
+    let nType = (n.type || '').toLowerCase();
+    
+    // ตรวจสอบว่ามีแหล่งน้ำหรือไม่
+    if (nType === 'reservoir' || nType === 'tank' || n.isReservoir) {
+        hasReservoir = true;
+        nType = 'reservoir';
+    } else {
+        nType = 'node';
+    }
+
+    nodeMap[n.id] = {
+      id: n.id,
+      type: nType,
+      elevation: elev,
+      demand: dem_Lps / 1000, // แปลง L/s เป็น m3/s สำหรับคำนวณ
+      // ค่าตั้งต้น: ถ้าเป็นแหล่งน้ำให้ Head = ระดับความสูง, ถ้าจุดต่อทั่วไปให้เดาว่าสูงกว่าระดับดิน 20m
+      head: nType === 'reservoir' ? elev : (elev + 20),
+      sumQ: 0,
+      sumdQdH: 0
+    };
+  });
+
+  if (!hasReservoir) {
+    alert("ข้อผิดพลาดทางกลศาสตร์: ระบบต้องมี 'แหล่งน้ำ (Reservoir)' อย่างน้อย 1 จุดเพื่อเป็นจุดอ้างอิงพลังงาน (Boundary Condition)");
+    return false;
+  }
+
+  let linkData = sysLinks.map(l => {
+    // รองรับชื่อ Property หลายรูปแบบ (Source/Target หรือ n1/n2)
+    let s = l.source ?? l.n1;
+    let t = l.target ?? l.n2;
+    let D_mm = parseFloat(l.diameter ?? l.d) || 100;
+    let L_m = parseFloat(l.length ?? l.l) || 10;
+    let C_val = parseFloat(l.c ?? l.c_value) || 100;
+    
+    let D_m = D_mm / 1000; // แปลง mm เป็น m
+    
+    // Resistance Factor (R) ในสมการ Hazen-Williams
+    // hf = R * Q * |Q|^(0.852)
+    let R = (HW_COEFF * L_m) / (Math.pow(C_val, HW_EXP) * Math.pow(D_m, 4.87));
+    
+    return {
+      id: l.id,
+      source: s,
+      target: t,
+      R: R,
+      area: Math.PI * Math.pow(D_m / 2, 2),
+      flow: 0
+    };
+  });
+
+  // 2. เริ่มลูปคำนวณแบบ Newton-Raphson
+  let iter = 0;
+  let maxError = 1;
+
+  while (iter < MAX_ITER && maxError > TOLERANCE) {
+    maxError = 0;
+
+    // ล้างค่าสะสมที่จุดต่อ
+    Object.values(nodeMap).forEach(n => {
+      n.sumQ = 0;
+      n.sumdQdH = 0;
+    });
+
+    // คำนวณอัตราการไหลในท่อแต่ละเส้นตามค่า Head ปัจจุบัน
+    linkData.forEach(link => {
+      let n1 = nodeMap[link.source];
+      let n2 = nodeMap[link.target];
+      if (!n1 || !n2) return;
+
+      let dH = n1.head - n2.head; 
+      let absDh = Math.abs(dH);
+      let dir = Math.sign(dH); 
+      
+      let Q = 0;
+      let dQdH = 0; 
+
+      if (absDh > 1e-6) {
+        // Q = (dH / R)^(1/1.852)
+        Q = dir * Math.pow(absDh / link.R, 1 / HW_EXP);
+        // อนุพันธ์ dQ/dH
+        dQdH = (1 / HW_EXP) * Math.pow(1 / link.R, 1 / HW_EXP) * Math.pow(absDh, (1 / HW_EXP) - 1);
+      }
+
+      link.flow = Q;
+
+      // น้ำไหลเข้าเป็นบวก ไหลออกเป็นลบ
+      n1.sumQ -= Q;
+      n2.sumQ += Q;
+      n1.sumdQdH += dQdH;
+      n2.sumdQdH += dQdH;
+    });
+
+    // ปรับแก้ค่า Head ที่จุดต่อ
+    Object.values(nodeMap).forEach(n => {
+      if (n.type === 'reservoir') return; // แหล่งน้ำค่า Head คงที่
+
+      let netFlow = n.sumQ - n.demand;
+      let errorMagnitude = Math.abs(netFlow);
+      if (errorMagnitude > maxError) maxError = errorMagnitude;
+
+      if (n.sumdQdH > 1e-10) {
+        let deltaHead = netFlow / n.sumdQdH;
+        n.head += deltaHead * 0.6; // 0.6 คือ Relaxation factor ป้องกันการแกว่ง
+      }
+    });
+
+    iter++;
+  }
+
+  // 3. นำผลลัพธ์ที่สมดุลแล้ว อัปเดตกลับไปยัง Object เดิมของคุณ
+  sysNodes.forEach(n => {
+    let calcData = nodeMap[n.id];
+    if (calcData) {
+        n.head = parseFloat(calcData.head.toFixed(3));
+        n.pressure = parseFloat((calcData.head - calcData.elevation).toFixed(3));
+    }
+  });
+
+  sysLinks.forEach(l => {
+    let calcData = linkData.find(x => x.id === l.id);
+    if (calcData) {
+      let s = l.source ?? l.n1;
+      let t = l.target ?? l.n2;
+      
+      // อัปเดตค่า Flow (L/s)
+      l.flow = parseFloat((calcData.flow * 1000).toFixed(3)); 
+      // อัปเดตค่าความเร็ว Velocity (m/s)
+      l.velocity = parseFloat((Math.abs(calcData.flow) / calcData.area).toFixed(3));
+      // รองรับการบันทึกกลับไปที่ตัวแปร vel ตามโค้ดบางเวอร์ชัน
+      l.vel = l.velocity; 
+      
+      let h1 = nodeMap[s].head;
+      let h2 = nodeMap[t].head;
+      
+      // อัปเดตค่า Headloss (m)
+      l.headloss = parseFloat(Math.abs(h1 - h2).toFixed(3));
+      l.hl = l.headloss;
+    }
+  });
+
+  console.log(`คำนวณสำเร็จใน ${iter} รอบ (Error สูงสุด: ${(maxError*1000).toFixed(4)} L/s)`);
+  return true;
+}
