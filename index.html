@@ -1113,57 +1113,62 @@ function hwResistance(len, dia_mm, c) {
 }
 
 /**
- * Minor loss resistance coefficient Rm.
- * h_m = Rm · Q^2  (linearized into h = R·Q^1.852 form in solver)
- * Exact form: h_m = K · V²/2g = K·Q²/(2g·A²)
+ * Minor loss coefficient Rm for a pipe cross-section.
+ * h_m = Rm · Q²   (Q in m³/s, h_m in m)
+ * Darcy-Weisbach: h_m = K · V²/(2g) = K · Q² / (2g · A²)
+ *
+ * IMPORTANT: Rm follows Q² (exponent 2), NOT Q^1.852 (H-W).
+ * Never add Rm directly to R_hw — they have different exponents.
  */
 function minorResistance(dia_mm, K_val) {
-  const D = Math.max(dia_mm, 1) / 1000;
-  const A = Math.PI * Math.pow(D / 2, 2);
-  return K_val / (2 * 9.81 * A * A);
+  const D = Math.max(dia_mm, 1) / 1000;   // m
+  const A = Math.PI * Math.pow(D / 2, 2); // m²
+  return K_val / (2 * 9.81 * A * A);      // m / (m³/s)²
 }
 
 /**
  * Gate valve K-factor as function of opening percentage.
- * Follows a power-law approximation matching empirical data.
  */
 function valveKFactor(openPercent) {
-  if (openPercent <= 0)   return 1e12;  // fully closed → infinite resistance
-  if (openPercent >= 100) return 0.15;  // fully open → minimal loss
+  if (openPercent <= 0)   return 1e12;
+  if (openPercent >= 100) return 0.15;
   const t = openPercent / 100;
   return 0.15 * Math.pow(1 / t, 2.5);
 }
 
 /**
- * Total resistance for a pipe segment including minor losses
- * at end-node accessories (valves, check valves, etc.)
+ * Sum of minor-loss K factors at both endpoints of a link.
+ * Kept separate so callers can compute h_m = Rm·Q² correctly.
  */
-function pipeResistance(link, nodeS, nodeE) {
-  const C   = link.c  || 150;
-  const dia = link.dia || 100;
-  const R_hw = hwResistance(link.len, dia, C);
-
-  let K_total = 0;
+function linkKTotal(link, nodeS, nodeE) {
+  let K = 0;
   [nodeS, nodeE].forEach(n => {
     if (!n) return;
     switch (n.type) {
       case 'valve':
-        K_total += valveKFactor(n.openPercent ?? (n.status === 'CLOSED' ? 0 : 100));
+        K += valveKFactor(n.openPercent ?? (n.status === 'CLOSED' ? 0 : 100));
         break;
-      case 'check_valve':
-        K_total += MINOR_K.check_valve;
-        break;
-      case 'air_valve':
-        K_total += MINOR_K.air_valve;
-        break;
-      case 'hydrant':
-        K_total += MINOR_K.hydrant * 0.5; // partially open during normal ops
-        break;
+      case 'check_valve': K += MINOR_K.check_valve; break;
+      case 'air_valve':   K += MINOR_K.air_valve;   break;
+      case 'hydrant':     K += MINOR_K.hydrant * 0.5; break;
     }
   });
+  return K;
+}
 
-  const R_minor = K_total > 0 ? minorResistance(dia, K_total) : 0;
-  return R_hw + R_minor;
+/**
+ * Hazen-Williams resistance R_hw ONLY.
+ * h_f = R_hw · Q^1.852   (Q in m³/s)
+ *
+ * Minor losses are NOT included here because h_m = Rm·Q² (different exponent).
+ * Adding Rm to R_hw and applying Q^1.852 to both is physically wrong and
+ * causes HL to be grossly over-estimated.
+ * Minor losses are applied separately in the NR loop and in Step-5.
+ */
+function pipeResistance(link, nodeS, nodeE) {
+  const C   = link.c   || 150;
+  const dia = link.dia || 100;
+  return hwResistance(link.len, dia, C); // R_hw only
 }
 
 // ============================================================
@@ -1455,15 +1460,32 @@ function _solveHydraulics(hourOfDay) {
 
           const nS = nodeMap.get(l.s);
           const nE = nodeMap.get(l.e);
-          const R = pipeResistance(l, nS, nE);
+          const R_hw = pipeResistance(l, nS, nE); // H-W only (Q^1.852)
 
           const dH = nb.head - n.head;
           const sign = dH >= 0 ? 1 : -1;
           const aH = Math.abs(dH);
 
           if (aH > 1e-9) {
-            const Q = sign * Math.pow(aH / R, EXP);
-            const dQdH = EXP * Math.abs(Q) / aH; // |∂Q/∂H|
+            // First estimate Q from H-W only (ignore minor loss for first pass)
+            let Q_est = Math.pow(aH / R_hw, EXP);
+
+            // If minor losses exist, subtract h_m from available head so
+            // h_f = aH - h_m → Q is computed correctly from H-W alone.
+            // Use 1-2 Newton sub-iterations to converge Q with minor loss.
+            const K = linkKTotal(l, nS, nE);
+            if (K > 0) {
+              const Rm = minorResistance(l.dia || 100, K);
+              for (let sub = 0; sub < 2; sub++) {
+                const hm_est = Rm * Q_est * Q_est;
+                const hf_eff = Math.max(1e-12, aH - hm_est);
+                Q_est = Math.pow(hf_eff / R_hw, EXP);
+              }
+            }
+
+            const Q = sign * Q_est;
+            // dQ/dH: H-W derivative (∂Q/∂h_f · ∂h_f/∂H ≈ EXP·Q_est/aH for moderate h_m)
+            const dQdH = EXP * Q_est / aH;
             sumQ    += Q;
             sumdQdH += dQdH;
           }
@@ -1493,8 +1515,8 @@ function _solveHydraulics(hourOfDay) {
       }
     }
 
-    // Pump nodes: update head based on pump curve H = H₀ - R·Q²
-    // R is defined with Q in m³/h (from pumpR = hDiff/Q_d² where Q_d is m³/h)
+    // Pump nodes: update head based on pump curve H = H₀ - Rp·Q²
+    // Rp uses Q in m³/h (pumpR = hDiff / Q_d² where Q_d is m³/h)
     for (const p of nodes) {
       if (p.type !== 'pump' || !reachable.has(p.id)) continue;
 
@@ -1508,11 +1530,22 @@ function _solveHydraulics(hourOfDay) {
           if (!l) continue;
           const nS = nodeMap.get(l.s);
           const nE = nodeMap.get(l.e);
-          const R = pipeResistance(l, nS, nE);
+          const R_hw = pipeResistance(l, nS, nE); // H-W only
           const dH = p.head - nb.head;
           const sign = dH >= 0 ? 1 : -1;
           const aH = Math.abs(dH);
-          if (aH > 1e-9) Q_net_m3s += sign * Math.pow(aH / R, EXP);
+          if (aH > 1e-9) {
+            let Q_est = Math.pow(aH / R_hw, EXP);
+            const K = linkKTotal(l, nS, nE);
+            if (K > 0) {
+              const Rm = minorResistance(l.dia || 100, K);
+              for (let sub = 0; sub < 2; sub++) {
+                const hf_eff = Math.max(1e-12, aH - Rm * Q_est * Q_est);
+                Q_est = Math.pow(hf_eff / R_hw, EXP);
+              }
+            }
+            Q_net_m3s += sign * Q_est;
+          }
         }
       }
 
@@ -1521,7 +1554,7 @@ function _solveHydraulics(hourOfDay) {
       const H0    = p._pumpH0 || p.pumpHead * 1.33 || 40;
       const Rp    = p.pumpR   || 0.001;
       const newHead = p.el + Math.max(0, H0 - Rp * Q_m3h * Q_m3h);
-      // Relaxed update with higher weight (0.55) so pump head converges faster
+      // Relaxed update: weight 0.55 → faster convergence than original 0.18
       p.head = p.head * 0.45 + newHead * 0.55;
     }
 
@@ -1567,15 +1600,34 @@ function _solveHydraulics(hourOfDay) {
     const dH  = n1.head - n2.head;
     const aH  = Math.abs(dH);
     const sign = dH >= 0 ? 1 : -1;
-    const R    = pipeResistance(l, n1, n2);
-    const Q_m3s = aH > 1e-9 ? Math.pow(aH / R, EXP) : 0;
 
-    l.flow = Q_m3s * 3600 * sign;  // m³/h
-    l.vel  = (Q_m3s / A) * sign;   // m/s (signed: positive = n1→n2)
-    l.hl   = aH;                   // total head loss (m)
-    l.hf   = hwResistance(l.len, l.dia || 100, C) * Math.pow(Q_m3s, 1.852); // friction only
-    l.hm   = Math.max(0, aH - l.hf); // minor loss residual
-    l.re   = Math.abs(l.vel) * D / 1.004e-6; // Reynolds number (ν_water @ 20°C = 1.004×10⁻⁶ m²/s)
+    // R_hw only — minor losses handled separately
+    const R_hw = hwResistance(l.len, l.dia || 100, C);
+    const K    = linkKTotal(l, n1, n2);
+    const Rm   = K > 0 ? minorResistance(l.dia || 100, K) : 0;
+
+    // Solve Q accounting for both friction and minor losses.
+    // h_f = R_hw·Q^1.852,  h_m = Rm·Q²,  h_f + h_m = aH
+    // Iterate 3 times (converges in 2–3 steps for typical networks).
+    let Q_m3s = aH > 1e-9 ? Math.pow(aH / R_hw, EXP) : 0; // seed from H-W
+    if (Rm > 0 && aH > 1e-9) {
+      for (let sub = 0; sub < 3; sub++) {
+        const hm_cur  = Rm * Q_m3s * Q_m3s;
+        const hf_rem  = Math.max(1e-12, aH - hm_cur);
+        Q_m3s = Math.pow(hf_rem / R_hw, EXP);
+      }
+    }
+
+    // Compute friction and minor head losses from solved Q
+    const hf = R_hw * Math.pow(Q_m3s, 1.852);         // Hazen-Williams friction loss (m)
+    const hm = Rm > 0 ? Rm * Q_m3s * Q_m3s : 0;       // Minor (fitting) loss (m)
+
+    l.flow = Q_m3s * 3600 * sign;    // m³/h (signed: + = n1→n2)
+    l.vel  = (Q_m3s / A) * sign;     // m/s  (signed)
+    l.hf   = hf;                     // friction head loss (m)
+    l.hm   = hm;                     // minor head loss (m)
+    l.hl   = hf + hm;                // total head loss (m) — NOT the raw ΔHead
+    l.re   = Math.abs(l.vel) * D / 1.004e-6; // Reynolds number @ 20°C
   });
 
   _logger.info(`Solver: ${iters} iters, converged=${converged}, maxRes=${maxRes.toExponential(2)}`);
