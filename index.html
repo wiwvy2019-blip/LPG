@@ -1113,62 +1113,57 @@ function hwResistance(len, dia_mm, c) {
 }
 
 /**
- * Minor loss coefficient Rm for a pipe cross-section.
- * h_m = Rm · Q²   (Q in m³/s, h_m in m)
- * Darcy-Weisbach: h_m = K · V²/(2g) = K · Q² / (2g · A²)
- *
- * IMPORTANT: Rm follows Q² (exponent 2), NOT Q^1.852 (H-W).
- * Never add Rm directly to R_hw — they have different exponents.
+ * Minor loss resistance coefficient Rm.
+ * h_m = Rm · Q^2  (linearized into h = R·Q^1.852 form in solver)
+ * Exact form: h_m = K · V²/2g = K·Q²/(2g·A²)
  */
 function minorResistance(dia_mm, K_val) {
-  const D = Math.max(dia_mm, 1) / 1000;   // m
-  const A = Math.PI * Math.pow(D / 2, 2); // m²
-  return K_val / (2 * 9.81 * A * A);      // m / (m³/s)²
+  const D = Math.max(dia_mm, 1) / 1000;
+  const A = Math.PI * Math.pow(D / 2, 2);
+  return K_val / (2 * 9.81 * A * A);
 }
 
 /**
  * Gate valve K-factor as function of opening percentage.
+ * Follows a power-law approximation matching empirical data.
  */
 function valveKFactor(openPercent) {
-  if (openPercent <= 0)   return 1e12;
-  if (openPercent >= 100) return 0.15;
+  if (openPercent <= 0)   return 1e12;  // fully closed → infinite resistance
+  if (openPercent >= 100) return 0.15;  // fully open → minimal loss
   const t = openPercent / 100;
   return 0.15 * Math.pow(1 / t, 2.5);
 }
 
 /**
- * Sum of minor-loss K factors at both endpoints of a link.
- * Kept separate so callers can compute h_m = Rm·Q² correctly.
+ * Total resistance for a pipe segment including minor losses
+ * at end-node accessories (valves, check valves, etc.)
  */
-function linkKTotal(link, nodeS, nodeE) {
-  let K = 0;
+function pipeResistance(link, nodeS, nodeE) {
+  const C   = link.c  || 150;
+  const dia = link.dia || 100;
+  const R_hw = hwResistance(link.len, dia, C);
+
+  let K_total = 0;
   [nodeS, nodeE].forEach(n => {
     if (!n) return;
     switch (n.type) {
       case 'valve':
-        K += valveKFactor(n.openPercent ?? (n.status === 'CLOSED' ? 0 : 100));
+        K_total += valveKFactor(n.openPercent ?? (n.status === 'CLOSED' ? 0 : 100));
         break;
-      case 'check_valve': K += MINOR_K.check_valve; break;
-      case 'air_valve':   K += MINOR_K.air_valve;   break;
-      case 'hydrant':     K += MINOR_K.hydrant * 0.5; break;
+      case 'check_valve':
+        K_total += MINOR_K.check_valve;
+        break;
+      case 'air_valve':
+        K_total += MINOR_K.air_valve;
+        break;
+      case 'hydrant':
+        K_total += MINOR_K.hydrant * 0.5; // partially open during normal ops
+        break;
     }
   });
-  return K;
-}
 
-/**
- * Hazen-Williams resistance R_hw ONLY.
- * h_f = R_hw · Q^1.852   (Q in m³/s)
- *
- * Minor losses are NOT included here because h_m = Rm·Q² (different exponent).
- * Adding Rm to R_hw and applying Q^1.852 to both is physically wrong and
- * causes HL to be grossly over-estimated.
- * Minor losses are applied separately in the NR loop and in Step-5.
- */
-function pipeResistance(link, nodeS, nodeE) {
-  const C   = link.c   || 150;
-  const dia = link.dia || 100;
-  return hwResistance(link.len, dia, C); // R_hw only
+  const R_minor = K_total > 0 ? minorResistance(dia, K_total) : 0;
+  return R_hw + R_minor;
 }
 
 // ============================================================
@@ -1435,266 +1430,6 @@ function solveHydraulics() {
 
       alert("✅ วิเคราะห์ระบบชลศาสตร์เสร็จสิ้น (อัปเดตค่าภูมิศาสตร์และ Hazen-Williams)");
     }
-  // ── Step 2: Set initial heads ──
-  // For pumps: compute shutoff head automatically as H0 = H_design * 1.33
-  // This eliminates the need for user-input shutoff head field.
-  sources.forEach(s => {
-    if (s.type === 'pump') {
-      const H_d = s.pumpHead || 30;
-      const Q_d = s.pumpFlow || 100;  // m³/h
-      const H0 = H_d * 1.33; // auto-derive shutoff: H0 ≈ 1.33 × H_design
-      const hDiff = Math.max(H0 - H_d, 1);
-      s._pumpH0 = H0;         // store computed value (not saved to user data)
-      s.pumpR = hDiff / (Q_d * Q_d);  // R in m/(m³/h)²
-      s.head = s.el + H0;
-    } else if (s.type === 'tank') {
-      // ถัง: Total head = el (ระดับพื้นถัง) + waterLevel (ระดับน้ำในถัง)
-      const wl = Math.max(s.minLevel || 0.1, s.waterLevel || 5);
-      s.head = s.el + wl;
-    } else {
-      // Reservoir: Fixed-head = el + waterLevel (ความลึกน้ำเหนือจุดอ้างอิง)
-      s.head = s.el + (s.waterLevel || 10);
-    }
-  });
-  // Inactive pumps (schedule OFF this hour): treat as isolated — remove from reachable
-  nodes.filter(n => n.type === 'pump' && !activePumpIds.has(n.id)).forEach(p => {
-    p.head = p.el; // zero-head pump = effectively closed
-  });
-
-  // Use average source head as initial head for junction nodes
-  // (more stable than fixed +10m for high-head or low-head systems)
-  const srcHeads = sources.map(s => s.head).filter(h => isFinite(h));
-  const avgSrcHead = srcHeads.length > 0
-    ? srcHeads.reduce((a, b) => a + b, 0) / srcHeads.length
-    : 20;
-  nodes.forEach(n => {
-    if (!SOURCE_TYPES.has(n.type)) {
-      // Start at average source head so NR starts close to solution
-      n.head = reachable.has(n.id) ? Math.max(n.el, avgSrcHead) : n.el;
-    }
-  });
-
-  // ── Step 3: Newton-Raphson iterations ──
-  const MAX_ITER = 1200;
-  const TOL = 1e-6;
-  const EXP = 1 / 1.852; // Hazen-Williams exponent for inverse formula
-  let iters = 0, maxRes = 0, converged = false;
-
-  for (let iter = 0; iter < MAX_ITER; iter++) {
-    maxRes = 0;
-
-    // Re-enforce fixed heads at sources at the start of every iteration.
-    // Without this, pump relaxation can drift source heads away from their
-    // correct values and cause pressure errors at upstream nodes.
-    sources.forEach(s => {
-      if (s.type === 'tank') {
-        const wl = Math.max(s.minLevel || 0.1, s.waterLevel || 5);
-        s.head = s.el + wl;
-      } else if (s.type === 'reservoir') {
-        s.head = s.el + (s.waterLevel || 10);
-      }
-      // Pump heads are updated by the pump curve block below — not re-enforced here.
-    });
-
-    // Junction nodes: apply NR head correction
-    for (const n of nodes) {
-      if (SOURCE_TYPES.has(n.type) || !reachable.has(n.id)) continue;
-      if (closedValveNodes.has(n.id)) continue;
-
-      let sumQ = 0, sumdQdH = 0;
-
-      const adj = adjacency.get(n.id);
-      if (adj) {
-        for (const { linkId, neighborId } of adj) {
-          const nb = nodeMap.get(neighborId);
-          if (!nb || !reachable.has(neighborId)) continue;
-
-          // Check valve: block reverse flow
-          const l = linkMap.get(linkId);
-          if (!l) continue;
-          if (n.type === 'check_valve' || nb.type === 'check_valve') {
-            const flowDirectionOk = (l.s === n.id)
-              ? (nb.head < n.head)
-              : (nb.head > n.head);
-            if (!flowDirectionOk) continue;
-          }
-
-          const nS = nodeMap.get(l.s);
-          const nE = nodeMap.get(l.e);
-          const R_hw = pipeResistance(l, nS, nE); // H-W only (Q^1.852)
-
-          const dH = nb.head - n.head;
-          const sign = dH >= 0 ? 1 : -1;
-          const aH = Math.abs(dH);
-
-          if (aH > 1e-9) {
-            // First estimate Q from H-W only (ignore minor loss for first pass)
-            let Q_est = Math.pow(aH / R_hw, EXP);
-
-            // If minor losses exist, subtract h_m from available head so
-            // h_f = aH - h_m → Q is computed correctly from H-W alone.
-            // Use 1-2 Newton sub-iterations to converge Q with minor loss.
-            const K = linkKTotal(l, nS, nE);
-            if (K > 0) {
-              const Rm = minorResistance(l.dia || 100, K);
-              for (let sub = 0; sub < 2; sub++) {
-                const hm_est = Rm * Q_est * Q_est;
-                const hf_eff = Math.max(1e-12, aH - hm_est);
-                Q_est = Math.pow(hf_eff / R_hw, EXP);
-              }
-            }
-
-            const Q = sign * Q_est;
-            // dQ/dH: H-W derivative (∂Q/∂h_f · ∂h_f/∂H ≈ EXP·Q_est/aH for moderate h_m)
-            const dQdH = EXP * Q_est / aH;
-            sumQ    += Q;
-            sumdQdH += dQdH;
-          }
-        }
-      }
-
-      // Continuity residual: f(H) = ΣQ_in - Q_demand
-      const dem_m3s = (n.dem || 0) / 3600;
-      const residual = sumQ - dem_m3s;
-      if (Math.abs(residual) > maxRes) maxRes = Math.abs(residual);
-
-      // NR head correction: H_new = H_old - f(H)/f'(H)
-      // residual = ΣQ - demand;  f'(H) = sumdQdH (always positive)
-      // Correction = -residual/sumdQdH  (note the MINUS sign)
-      // Clamped to ±15 m per iteration for stability
-      if (sumdQdH > 1e-12) {
-        const dH = Math.max(-15, Math.min(15, -residual / sumdQdH));
-        n.head += dH;
-      } else if (residual < -1e-9) {
-        n.head = Math.max(n.el, n.head - 1.5);
-      }
-
-      // PRV: clamp downstream head to setpoint
-      if (n.type === 'prv') {
-        const target = n.el + (n.setting || 15);
-        if (n.head > target) n.head = n.head * 0.4 + target * 0.6;
-      }
-    }
-
-    // Pump nodes: update head based on pump curve H = H₀ - Rp·Q²
-    // Rp uses Q in m³/h (pumpR = hDiff / Q_d² where Q_d is m³/h)
-    for (const p of nodes) {
-      if (p.type !== 'pump' || !reachable.has(p.id)) continue;
-
-      let Q_net_m3s = 0;
-      const adj = adjacency.get(p.id);
-      if (adj) {
-        for (const { linkId, neighborId } of adj) {
-          const nb = nodeMap.get(neighborId);
-          if (!nb || !reachable.has(neighborId)) continue;
-          const l = linkMap.get(linkId);
-          if (!l) continue;
-          const nS = nodeMap.get(l.s);
-          const nE = nodeMap.get(l.e);
-          const R_hw = pipeResistance(l, nS, nE); // H-W only
-          const dH = p.head - nb.head;
-          const sign = dH >= 0 ? 1 : -1;
-          const aH = Math.abs(dH);
-          if (aH > 1e-9) {
-            let Q_est = Math.pow(aH / R_hw, EXP);
-            const K = linkKTotal(l, nS, nE);
-            if (K > 0) {
-              const Rm = minorResistance(l.dia || 100, K);
-              for (let sub = 0; sub < 2; sub++) {
-                const hf_eff = Math.max(1e-12, aH - Rm * Q_est * Q_est);
-                Q_est = Math.pow(hf_eff / R_hw, EXP);
-              }
-            }
-            Q_net_m3s += sign * Q_est;
-          }
-        }
-      }
-
-      // Q in m³/h to match pumpR units (pumpR = hDiff / Q_d²,  Q_d in m³/h)
-      const Q_m3h = Math.max(0, Q_net_m3s * 3600);
-      const H0    = p._pumpH0 || p.pumpHead * 1.33 || 40;
-      const Rp    = p.pumpR   || 0.001;
-      const newHead = p.el + Math.max(0, H0 - Rp * Q_m3h * Q_m3h);
-      // Relaxed update: weight 0.55 → faster convergence than original 0.18
-      p.head = p.head * 0.45 + newHead * 0.55;
-    }
-
-    if (maxRes < TOL) { converged = true; iters = iter + 1; break; }
-    iters = iter + 1;
-  }
-
-  // ── Step 4: Compute node pressures ──
-  nodes.filter(n => n.type === 'check_valve').forEach(cv => cv.cvBlocked = false);
-  nodes.forEach(n => { n.p = Math.max(0, n.head - n.el); });
-
-  // ── Step 5: Compute link flows, velocities, and head losses ──
-  links.forEach(l => {
-    const n1 = nodeMap.get(l.s);
-    const n2 = nodeMap.get(l.e);
-    if (!n1 || !n2) { l.flow=0; l.vel=0; l.hl=0; l.hf=0; l.hm=0; l.re=0; return; }
-
-    const isolated = !reachable.has(n1.id) || !reachable.has(n2.id);
-    const closed1  = n1.type === 'valve' && (n1.openPercent ?? 100) === 0;
-    const closed2  = n2.type === 'valve' && (n2.openPercent ?? 100) === 0;
-
-    // Check valve back-flow prevention
-    let cvBlocked = false;
-    if (n1.type === 'check_valve' || n2.type === 'check_valve') {
-      if (n1.head < n2.head) {
-        cvBlocked = true;
-        if (n1.type === 'check_valve') n1.cvBlocked = true;
-        if (n2.type === 'check_valve') n2.cvBlocked = true;
-      }
-    }
-
-    if (isolated || closed1 || closed2 || cvBlocked) {
-      l.flow = 0; l.vel = 0;
-      l.hl = Math.abs(n1.head - n2.head);
-      l.hf = l.hl; l.hm = 0; l.re = 0;
-      return;
-    }
-
-    const D = (l.dia || 100) / 1000; // m
-    const C = l.c || 150;
-    const A = Math.PI * Math.pow(D / 2, 2); // m²
-
-    const dH  = n1.head - n2.head;
-    const aH  = Math.abs(dH);
-    const sign = dH >= 0 ? 1 : -1;
-
-    // R_hw only — minor losses handled separately
-    const R_hw = hwResistance(l.len, l.dia || 100, C);
-    const K    = linkKTotal(l, n1, n2);
-    const Rm   = K > 0 ? minorResistance(l.dia || 100, K) : 0;
-
-    // Solve Q accounting for both friction and minor losses.
-    // h_f = R_hw·Q^1.852,  h_m = Rm·Q²,  h_f + h_m = aH
-    // Iterate 3 times (converges in 2–3 steps for typical networks).
-    let Q_m3s = aH > 1e-9 ? Math.pow(aH / R_hw, EXP) : 0; // seed from H-W
-    if (Rm > 0 && aH > 1e-9) {
-      for (let sub = 0; sub < 3; sub++) {
-        const hm_cur  = Rm * Q_m3s * Q_m3s;
-        const hf_rem  = Math.max(1e-12, aH - hm_cur);
-        Q_m3s = Math.pow(hf_rem / R_hw, EXP);
-      }
-    }
-
-    // Compute friction and minor head losses from solved Q
-    const hf = R_hw * Math.pow(Q_m3s, 1.852);         // Hazen-Williams friction loss (m)
-    const hm = Rm > 0 ? Rm * Q_m3s * Q_m3s : 0;       // Minor (fitting) loss (m)
-
-    l.flow = Q_m3s * 3600 * sign;    // m³/h (signed: + = n1→n2)
-    l.vel  = (Q_m3s / A) * sign;     // m/s  (signed)
-    l.hf   = hf;                     // friction head loss (m)
-    l.hm   = hm;                     // minor head loss (m)
-    l.hl   = hf + hm;                // total head loss (m) — NOT the raw ΔHead
-    l.re   = Math.abs(l.vel) * D / 1.004e-6; // Reynolds number @ 20°C
-  });
-
-  _logger.info(`Solver: ${iters} iters, converged=${converged}, maxRes=${maxRes.toExponential(2)}`);
-  return { iters, converged, maxRes };
-}
-
 // ============================================================
 //  UI: EPS TIMELINE CONTROL
 // ============================================================
