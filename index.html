@@ -1332,47 +1332,109 @@ async function calculate() {
  * Complexity: O(n_nodes × n_links × max_iters) per call.
  * Typical convergence: 5–30 iterations for well-conditioned networks.
  */
-function _solveHydraulics(hourOfDay) {
-  const SOURCE_TYPES = new Set(['reservoir','tank','pump']);
-  // Determine which pumps are active this hour based on status + schedule
-  const h = (typeof hourOfDay === 'number') ? hourOfDay : 0;
-  const activePumpIds = new Set(
-    nodes.filter(n => n.type === 'pump' &&
-      n.pumpStatus !== 'OFF' &&
-      (n.pumpSchedule ? (n.pumpSchedule[h] !== 0) : true)
-    ).map(n => n.id)
-  );
-  const sources = nodes.filter(n =>
-    SOURCE_TYPES.has(n.type) &&
-    (n.type !== 'pump' || activePumpIds.has(n.id))
-  );
-  if (sources.length === 0) return { iters:0, converged:true, maxRes:0 };
+function solveHydraulics() {
+      console.log("Starting Hydraulic Simulation...");
+      
+      const BAR_TO_M = 10.1972; // ค่าคงที่แปลง Bar เป็นเมตรน้ำ (mH2O)
 
-  // ── Step 1: Build connectivity graph using adjacency index ──
-  // Determine which nodes are reachable from a source (BFS).
-  // Only reachable nodes participate in the solver.
-  const closedValveNodes = new Set(
-    nodes.filter(n => n.type === 'valve' && (n.openPercent ?? 100) === 0).map(n => n.id)
-  );
+      // 1. รีเซ็ตค่าผลลัพธ์เก่าทั้งหมดก่อนเริ่มคำนวณใหม่
+      Object.values(nodes).forEach(n => { 
+        n.pressure = 0; 
+        n.totalHead = n.elevation || 0; 
+        n.calculated = false; 
+      });
+      Object.values(links).forEach(l => { 
+        l.headLoss = 0; 
+        l.velocity = 0; 
+        l.calculated = false; 
+      });
 
-  // Build reduced adjacency (excluding closed valves) for connectivity check
-  const reachable = new Set();
-  const queue = sources.map(s => s.id);
-  queue.forEach(id => reachable.add(id));
-  let qi = 0;
-  while (qi < queue.length) {
-    const cur = queue[qi++];
-    const adj = adjacency.get(cur) || [];
-    for (const { linkId, neighborId } of adj) {
-      if (reachable.has(neighborId)) continue;
-      const l = linkMap.get(linkId);
-      if (!l) continue;
-      // Skip if any endpoint is a fully-closed valve
-      if (closedValveNodes.has(l.s) || closedValveNodes.has(l.e)) continue;
-      reachable.add(neighborId);
-      queue.push(neighborId);
+      // ค้นหาจุดแหล่งจ่ายน้ำ (Source Node)
+      let sources = Object.values(nodes).filter(n => n.type === 'source');
+      if(sources.length === 0) {
+        alert("กรุณากำหนดจุดแหล่งจ่ายน้ำ (Source Node) อย่างน้อย 1 จุด!");
+        return;
+      }
+
+      // 2. กำหนดค่าพลังงานรวม (Total Head) เริ่มต้นที่แหล่งจ่าย
+      // พลังงานรวม = ความสูงระดับดิน + แรงดันที่สร้างขึ้นจากปั๊ม/ถัง
+      sources.forEach(src => {
+        let pressureHead = (src.initialPressure || 0) * BAR_TO_M;
+        src.totalHead = (src.elevation || 0) + pressureHead;
+        src.calculated = true;
+      });
+
+      // 3. คำนวณความเสียดทานในเส้นท่อและกระจายแรงดัน
+      let iterations = 0;
+      let maxIterations = Object.keys(links).length * 2;
+      let changed = true;
+
+      while(changed && iterations < maxIterations) {
+        changed = false;
+        iterations++;
+
+        Object.values(links).forEach(link => {
+          let n1 = nodes[link.from];
+          let n2 = nodes[link.to];
+
+          if(!n1 || !n2) return;
+
+          // แปลงหน่วยให้ตรงตามสมการ Hazen-Williams (สำคัญมาก)
+          let flow_m3h = link.flow || 0;
+          let flow_m3s = Math.abs(flow_m3h) / 3600; // แปลง m3/h -> m3/s
+          let diam_m = (link.diameter || 100) / 1000; // แปลง mm -> m
+          let cFactor = link.cFactor || 140;
+          
+          let velocity = 0;
+          let headLoss = 0;
+
+          if(diam_m > 0 && flow_m3s > 0) {
+            // คำนวณความเร็ว V = Q/A
+            let area = (Math.PI * Math.pow(diam_m, 2)) / 4;
+            velocity = flow_m3s / area;
+            
+            // สมการ Hazen-Williams สำหรับ Metric: hf = 10.67 * L * (Q/C)^1.852 / D^4.87
+            headLoss = 10.67 * (link.length || 0) * Math.pow(flow_m3s / cFactor, 1.852) / Math.pow(diam_m, 4.87);
+          }
+
+          link.velocity = velocity;
+          link.headLoss = flow_m3h >= 0 ? headLoss : -headLoss; 
+          link.calculated = true;
+
+          // กระจายพลังงานไปตามทิศทางการไหล (ปลายทาง = ต้นทาง - ความเสียดทาน)
+          if(n1.calculated && !n2.calculated && flow_m3h >= 0) {
+            n2.totalHead = n1.totalHead - link.headLoss;
+            n2.calculated = true;
+            changed = true;
+          } else if (n2.calculated && !n1.calculated && flow_m3h < 0) {
+            n1.totalHead = n2.totalHead + link.headLoss; // กรณีน้ำไหลย้อนทาง
+            n1.calculated = true;
+            changed = true;
+          }
+        });
+      }
+
+      // 4. คำนวณแรงดันใช้งาน (Pressure Bar) จาก Total Head 
+      Object.values(nodes).forEach(n => {
+        if(n.calculated) {
+          // แรงดันตกคร่อมที่แท้จริง = พลังงานรวม - ความสูงระดับผิวดิน
+          n.pressure = (n.totalHead - (n.elevation || 0)) / BAR_TO_M;
+        } else {
+          n.pressure = 0; 
+        }
+      });
+
+      // อัปเดต UI ทั้งหมดให้สะท้อนค่าที่คำนวณใหม่
+      if (typeof renderAll === 'function') renderAll();
+      if (typeof updateResultsUI === 'function') updateResultsUI(); 
+      if (typeof updateOverlay === 'function') updateOverlay(); 
+      
+      // อัปเดต Panel ด้านข้างถ้ากำลังเลือกดูข้อมูลอยู่
+      if (typeof selectedNode !== 'undefined' && selectedNode && typeof selectNode === 'function') selectNode(selectedNode);
+      else if (typeof selectedLink !== 'undefined' && selectedLink && typeof selectLink === 'function') selectLink(selectedLink);
+
+      alert("✅ วิเคราะห์ระบบชลศาสตร์เสร็จสิ้น (อัปเดตค่าภูมิศาสตร์และ Hazen-Williams)");
     }
-  }
 
   // ── Step 2: Set initial heads ──
   // For pumps: compute shutoff head automatically as H0 = H_design * 1.33
