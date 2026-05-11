@@ -1327,141 +1327,176 @@ async function calculate() {
  * Complexity: O(n_nodes × n_links × max_iters) per call.
  * Typical convergence: 5–30 iterations for well-conditioned networks.
  */
-window.runHydraulicSolver = function(nodes, links) {
-    const MAX_ITER = 200;
-    const TOLERANCE = 0.0001; // Accuracy 0.1 mm of Head
-    const RELAXATION = 0.5;   // Damping factor to ensure numerical stability
+window.HydraulicEngine = {
+    MAX_ITER: 200,
+    TOLERANCE: 0.0001,
+    RELAXATION: 0.5,
 
-    // 1. Data Structure Prep & Adjacency List Mapping (O(N) Complexity)
-    const nodeMap = new Map();
-    const adjList = new Map();
+    /**
+     * 1. PRE-PROCESSING (ทำครั้งเดียวก่อนคำนวณ เพื่อลดคอขวด)
+     * สร้าง Graph และเตรียมค่าคงที่เพื่อไม่ให้ต้องคำนวณซ้ำในลูป
+     */
+    buildNetworkGraph: function(nodes, links) {
+        const nodeMap = new Map();
+        const adjList = new Map();
 
-    // Initialization & State Setup
-    nodes.forEach(n => {
-        // Convert demand from CMH (m3/h) to CMS (m3/s) for SI Unit Calculation
-        n._demandCMS = (parseFloat(n.demand) || 0) / 3600;
-        
-        // Initial guess for Head
-        if (n.type === 'reservoir' || n.type === 'tank') {
-            n.head = parseFloat(n.elevation); // Boundary Condition (Fixed Head)
-        } else {
-            // Give normal nodes an initial head guess (elevation + standard pressure)
-            n.head = typeof n.head !== 'undefined' && n.head > 0 ? n.head : parseFloat(n.elevation) + 20;
-        }
-        
-        nodeMap.set(n.id, n);
-        adjList.set(n.id, []);
-    });
-
-    // 2. Pre-Calculate Hydraulic Constraints (Avoid repetitive calculation)
-    links.forEach(l => {
-        const D_m = parseFloat(l.diameter) / 1000; // Convert mm to m
-        const L = parseFloat(l.length);
-        const C = parseFloat(l.c_value);
-
-        // Hazen-Williams Resistance factor (R)
-        // h_f = R * |Q|^0.852 * Q
-        // R = 10.67 * L / (C^1.852 * D^4.8704)
-        l._R = (10.67 * L) / (Math.pow(C, 1.852) * Math.pow(D_m, 4.8704));
-        l.flow = 0.0001; // Small initial flow to prevent division by zero in derivative
-
-        // Build Graph Connections (Adjacency List)
-        if (nodeMap.has(l.source) && nodeMap.has(l.target)) {
-            adjList.get(l.source).push({ pipe: l, connectedNode: l.target, dir: 1 }); // 1 = Flow Out
-            adjList.get(l.target).push({ pipe: l, connectedNode: l.source, dir: -1 }); // -1 = Flow In
-        }
-    });
-
-    // 3. Iterative Solver (Newton-Raphson Method for Flow/Head balance)
-    let iter = 0;
-    let maxHeadChange = Infinity;
-
-    while (iter < MAX_ITER && maxHeadChange > TOLERANCE) {
-        maxHeadChange = 0;
-
-        // Step 3.1: Calculate Flows from current Heads
-        links.forEach(l => {
-            const h1 = nodeMap.get(l.source).head;
-            const h2 = nodeMap.get(l.target).head;
-            const dH = h1 - h2; // Head difference
-
-            // Invert HW equation: Q = sign(dH) * (|dH| / R)^(1/1.852)
-            const exponent = 1 / 1.852;
-            const absFlowCMS = Math.pow(Math.abs(dH) / l._R, exponent);
-            
-            l.flowCMS = dH >= 0 ? absFlowCMS : -absFlowCMS;
-            l.headloss = Math.abs(dH);
-            
-            // Derivative dQ/dH for Newton-Raphson Jacobian approximation
-            // dQ/dH = (1/1.852) * (|dH|/R)^((1/1.852)-1) * (1/R)
-            if (Math.abs(dH) > 0.00001) {
-                l._dQdH = exponent * Math.pow(Math.abs(dH) / l._R, exponent - 1) / l._R;
+        nodes.forEach(n => {
+            n._baseDemandCMS = (parseFloat(n.demand) || 0) / 3600; // ค่า Demand ตั้งต้น (m3/s)
+            if (n.type === 'reservoir' || n.type === 'tank') {
+                n.head = parseFloat(n.elevation); 
             } else {
-                l._dQdH = 0.001; // Minimum numerical limit to prevent infinity
+                n.head = parseFloat(n.elevation) + 20; // Initial guess 20m pressure
+            }
+            nodeMap.set(n.id, n);
+            adjList.set(n.id, []);
+        });
+
+        links.forEach(l => {
+            const D_m = parseFloat(l.diameter) / 1000;
+            const L = parseFloat(l.length);
+            const C = parseFloat(l.c_value);
+
+            // R = Resistance Constant (คำนวณครั้งเดียวเก็บไว้เลย ไม่ต้องทำซ้ำ 24 รอบ)
+            l._R = (10.67 * L) / (Math.pow(C, 1.852) * Math.pow(D_m, 4.8704));
+            l.flowCMS = 0.0001; // ป้องกันหารด้วยศูนย์
+
+            if (nodeMap.has(l.source) && nodeMap.has(l.target)) {
+                adjList.get(l.source).push({ pipe: l, connectedNode: l.target, dir: 1 }); // ออก
+                adjList.get(l.target).push({ pipe: l, connectedNode: l.source, dir: -1 }); // เข้า
             }
         });
 
-        // Step 3.2: Update Node Heads to satisfy Mass Balance (Kirchhoff's First Law)
-        nodes.forEach(n => {
-            // Skip Fixed Head nodes (Reservoirs)
-            if (n.type === 'reservoir' || n.type === 'tank') return;
+        return { nodeMap, adjList };
+    },
 
-            let sumFlow = 0;   // Net Flow into the node
-            let sum_dQdH = 0;  // Sum of derivatives
+    /**
+     * 2. CORE SOLVER (Nodal Newton-Raphson) 
+     * โซลเวอร์ความเร็วสูง สำหรับแก้สมการ 1 Snapshot (1 ช่วงเวลา)
+     */
+    solveTimeStep: function(nodes, links, nodeMap, adjList, hourMultiplier = 1.0) {
+        let iter = 0;
+        let maxHeadChange = Infinity;
 
-            adjList.get(n.id).forEach(connection => {
-                const pipe = connection.pipe;
-                // dir: 1 means pipe starts here (flow leaves), -1 means pipe ends here (flow enters)
-                // If flow is positive and dir is 1 -> leaving node (-)
-                // If flow is positive and dir is -1 -> entering node (+)
-                const flowEntering = pipe.flowCMS * (-connection.dir);
-                sumFlow += flowEntering;
-                sum_dQdH += pipe._dQdH;
+        while (iter < this.MAX_ITER && maxHeadChange > this.TOLERANCE) {
+            maxHeadChange = 0;
+
+            // 2.1 อัปเดต Flow ตาม Head ล่าสุด (O(N))
+            links.forEach(l => {
+                const h1 = nodeMap.get(l.source).head;
+                const h2 = nodeMap.get(l.target).head;
+                const dH = h1 - h2;
+                
+                const exponent = 1 / 1.852;
+                const absFlowCMS = Math.pow(Math.abs(dH) / l._R, exponent);
+                l.flowCMS = dH >= 0 ? absFlowCMS : -absFlowCMS;
+                l.headloss = Math.abs(dH);
+                
+                // Derivative สำหรับ Newton-Raphson
+                l._dQdH = (Math.abs(dH) > 0.00001) 
+                    ? exponent * Math.pow(Math.abs(dH) / l._R, exponent - 1) / l._R 
+                    : 0.001;
             });
 
-            // Flow Balance Error = Flow In - Flow Out - Demand
-            const nodeError = sumFlow - n._demandCMS;
+            // 2.2 ปรับแก้ Head ของ Node ตาม Error ของ Flow Balance (O(N))
+            nodes.forEach(n => {
+                if (n.type === 'reservoir' || n.type === 'tank') return;
 
-            // Newton-Raphson Step: deltaH = Error / Derivative
-            if (sum_dQdH > 0) {
-                const deltaH = nodeError / sum_dQdH;
-                n.head += deltaH * RELAXATION; // Apply relaxation factor
-                
-                maxHeadChange = Math.max(maxHeadChange, Math.abs(deltaH));
-            }
+                let sumFlow = 0;
+                let sum_dQdH = 0;
+
+                adjList.get(n.id).forEach(conn => {
+                    sumFlow += conn.pipe.flowCMS * (-conn.dir);
+                    sum_dQdH += conn.pipe._dQdH;
+                });
+
+                // Demand คูณด้วย Multiplier ประจำชั่วโมง (Pattern)
+                const currentDemandCMS = n._baseDemandCMS * hourMultiplier;
+                const nodeError = sumFlow - currentDemandCMS;
+
+                if (sum_dQdH > 0) {
+                    const deltaH = nodeError / sum_dQdH;
+                    n.head += deltaH * this.RELAXATION;
+                    maxHeadChange = Math.max(maxHeadChange, Math.abs(deltaH));
+                }
+            });
+            iter++;
+        }
+        return { iterations: iter, maxError: maxHeadChange };
+    },
+
+    /**
+     * 3. SINGLE SNAPSHOT RUNNER (สำหรับการกดคำนวณรวดเดียวจบ)
+     */
+    runSteadyState: function(nodes, links) {
+        const { nodeMap, adjList } = this.buildNetworkGraph(nodes, links);
+        this.solveTimeStep(nodes, links, nodeMap, adjList, 1.0);
+        this.postProcessResults(nodes, links);
+    },
+
+    /**
+     * 4. 24-HOUR EPS RUNNER (จำลอง 24 ชั่วโมงความเร็วแสง)
+     * ฟังก์ชันนี้มาแทนที่การวนลูป 24 ชั่วโมงแบบเดิม
+     */
+    run24hSimulationFast: function(nodes, links, demandPatternMatrix) {
+        console.time("24H_Simulation");
+        
+        // **เคล็ดลับความเร็ว**: Build Graph ครั้งเดียว!
+        const { nodeMap, adjList } = this.buildNetworkGraph(nodes, links);
+        const results24h = [];
+
+        // ลูป 24 ชั่วโมง
+        for (let hour = 0; hour < 24; hour++) {
+            // ดึงตัวคูณ Demand (ถ้าไม่มีให้ใช้ 1.0)
+            const multiplier = demandPatternMatrix ? demandPatternMatrix[hour] : 1.0;
+            
+            // เรียก Solver (ใช้เวลาไม่กี่ ms เพราะไม่ได้สร้าง Graph ใหม่)
+            this.solveTimeStep(nodes, links, nodeMap, adjList, multiplier);
+            
+            // อัปเดตระดับน้ำในถังเก็บน้ำ (Tank) สำหรับชั่วโมงถัดไป (สมมติว่ามี Tank)
+            nodes.forEach(n => {
+                if(n.type === 'tank') {
+                    // หา Net Flow เข้า/ออก Tank
+                    let tankNetFlowCMS = 0;
+                    adjList.get(n.id).forEach(conn => {
+                        tankNetFlowCMS += conn.pipe.flowCMS * (-conn.dir);
+                    });
+                    // เปลี่ยนแปลง Head ตาม Volume (Q * dt / Area) - พื้นฐาน EPANET
+                    // สมมติพื้นที่หน้าตัดถัง 100 ตร.ม., dt = 3600 วินาที
+                    const tankArea = n.tankArea || 100; 
+                    const dH = (tankNetFlowCMS * 3600) / tankArea;
+                    n.head += dH; 
+                }
+            });
+
+            // ประมวลผลหน่วยเป็น UI และ Clone ข้อมูลเก็บไว้ใน Array
+            this.postProcessResults(nodes, links);
+            results24h.push({
+                hour: hour,
+                nodes: JSON.parse(JSON.stringify(nodes)), // Deep copy เก็บประวัติ
+                links: JSON.parse(JSON.stringify(links))
+            });
+        }
+        
+        console.timeEnd("24H_Simulation");
+        console.log("✅ 24-Hour Simulation Complete.");
+        return results24h;
+    },
+
+    /**
+     * 5. CLEANUP & FORMATTING
+     * แปลงหน่วยกลับเป็นแบบที่ UI เดิมต้องการ (CMH, m/s, bar)
+     */
+    postProcessResults: function(nodes, links) {
+        nodes.forEach(n => {
+            n.pressure = n.head - parseFloat(n.elevation);
         });
-
-        iter++;
+        links.forEach(l => {
+            l.flow = l.flowCMS * 3600; // แปลงกลับเป็น CMH
+            const radius_m = (parseFloat(l.diameter) / 1000) / 2;
+            const area_m2 = Math.PI * Math.pow(radius_m, 2);
+            l.velocity = Math.abs(l.flowCMS) / area_m2;
+        });
     }
-
-    // 4. Post-Processing & Output Formatting
-    nodes.forEach(n => {
-        // Calculate final pressure (Head - Elevation)
-        n.pressure = n.head - parseFloat(n.elevation); 
-        
-        // Cleanup internal variables to avoid memory leak / payload bloat
-        delete n._demandCMS;
-    });
-
-    links.forEach(l => {
-        // Convert CMS back to UI Unit (e.g., CMH)
-        l.flow = l.flowCMS * 3600; 
-        
-        // Calculate Velocity V = Q / A (Q in CMS, A in m2)
-        const radius_m = (parseFloat(l.diameter) / 1000) / 2;
-        const area_m2 = Math.PI * Math.pow(radius_m, 2);
-        l.velocity = Math.abs(l.flowCMS) / area_m2;
-
-        // Cleanup
-        delete l._R;
-        delete l._dQdH;
-        delete l.flowCMS;
-    });
-
-    console.log(`🚀 [Hydraulic Engine] Solved in ${iter} iterations. Tolerance Error: ${maxHeadChange.toFixed(6)} m.`);
-    return { iterations: iter, maxError: maxHeadChange, converged: maxHeadChange <= TOLERANCE };
-};
-
 // ============================================================
 //  UI: EPS TIMELINE CONTROL
 // ============================================================
