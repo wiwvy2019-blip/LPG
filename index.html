@@ -1327,232 +1327,140 @@ async function calculate() {
  * Complexity: O(n_nodes × n_links × max_iters) per call.
  * Typical convergence: 5–30 iterations for well-conditioned networks.
  */
-function _solveHydraulics(hourOfDay) {
-  const SOURCE_TYPES = new Set(['reservoir','tank','pump']);
-  // Determine which pumps are active this hour based on status + schedule
-  const h = (typeof hourOfDay === 'number') ? hourOfDay : 0;
-  const activePumpIds = new Set(
-    nodes.filter(n => n.type === 'pump' &&
-      n.pumpStatus !== 'OFF' &&
-      (n.pumpSchedule ? (n.pumpSchedule[h] !== 0) : true)
-    ).map(n => n.id)
-  );
-  const sources = nodes.filter(n =>
-    SOURCE_TYPES.has(n.type) &&
-    (n.type !== 'pump' || activePumpIds.has(n.id))
-  );
-  if (sources.length === 0) return { iters:0, converged:true, maxRes:0 };
+window.runHydraulicSolver = function(nodes, links) {
+    const MAX_ITER = 200;
+    const TOLERANCE = 0.0001; // Accuracy 0.1 mm of Head
+    const RELAXATION = 0.5;   // Damping factor to ensure numerical stability
 
-  // ── Step 1: Build connectivity graph using adjacency index ──
-  // Determine which nodes are reachable from a source (BFS).
-  // Only reachable nodes participate in the solver.
-  const closedValveNodes = new Set(
-    nodes.filter(n => n.type === 'valve' && (n.openPercent ?? 100) === 0).map(n => n.id)
-  );
+    // 1. Data Structure Prep & Adjacency List Mapping (O(N) Complexity)
+    const nodeMap = new Map();
+    const adjList = new Map();
 
-  // Build reduced adjacency (excluding closed valves) for connectivity check
-  const reachable = new Set();
-  const queue = sources.map(s => s.id);
-  queue.forEach(id => reachable.add(id));
-  let qi = 0;
-  while (qi < queue.length) {
-    const cur = queue[qi++];
-    const adj = adjacency.get(cur) || [];
-    for (const { linkId, neighborId } of adj) {
-      if (reachable.has(neighborId)) continue;
-      const l = linkMap.get(linkId);
-      if (!l) continue;
-      // Skip if any endpoint is a fully-closed valve
-      if (closedValveNodes.has(l.s) || closedValveNodes.has(l.e)) continue;
-      reachable.add(neighborId);
-      queue.push(neighborId);
-    }
-  }
-
-  // ── Step 2: Set initial heads ──
-  // For pumps: compute shutoff head automatically as H0 = H_design * 1.33
-  // This eliminates the need for user-input shutoff head field.
-  sources.forEach(s => {
-    if (s.type === 'pump') {
-      const H_d = s.pumpHead || 30;
-      const Q_d = s.pumpFlow || 100;
-      const H0 = H_d * 1.33; // auto-derive shutoff: H0 ≈ 1.33 × H_design
-      const hDiff = Math.max(H0 - H_d, 1);
-      s._pumpH0 = H0;         // store computed value (not saved to user data)
-      s.pumpR = hDiff / Math.pow(Q_d, 2);
-      s.head = s.el + H0;
-    } else if (s.type === 'tank') {
-      // ถัง: Fixed-head = el + waterLevel (current); หากต่ำกว่า minLevel → head = el + minLevel
-      const wl = Math.max(s.minLevel || 0.1, s.waterLevel || 5);
-      s.head = s.el + wl;
-    } else {
-      // Reservoir: Fixed-head = el + waterLevel (constant throughout EPS)
-      s.head = s.el + (s.waterLevel || 10);
-    }
-  });
-  // Inactive pumps (schedule OFF this hour): treat as isolated — remove from reachable
-  nodes.filter(n => n.type === 'pump' && !activePumpIds.has(n.id)).forEach(p => {
-    p.head = p.el; // zero-head pump = effectively closed
-  });
-  nodes.forEach(n => {
-    if (!SOURCE_TYPES.has(n.type)) {
-      n.head = reachable.has(n.id) ? n.el + 10 : n.el;
-    }
-  });
-
-  // ── Step 3: Newton-Raphson iterations ──
-  const MAX_ITER = 1200;
-  const TOL = 1e-6;
-  const EXP = 1 / 1.852; // Hazen-Williams exponent for inverse formula
-  let iters = 0, maxRes = 0, converged = false;
-
-  for (let iter = 0; iter < MAX_ITER; iter++) {
-    maxRes = 0;
-
-    // Junction nodes: apply NR head correction
-    for (const n of nodes) {
-      if (SOURCE_TYPES.has(n.type) || !reachable.has(n.id)) continue;
-      if (closedValveNodes.has(n.id)) continue;
-
-      let sumQ = 0, sumdQdH = 0;
-
-      const adj = adjacency.get(n.id);
-      if (adj) {
-        for (const { linkId, neighborId } of adj) {
-          const nb = nodeMap.get(neighborId);
-          if (!nb || !reachable.has(neighborId)) continue;
-
-          // Check valve: block reverse flow
-          const l = linkMap.get(linkId);
-          if (!l) continue;
-          if (n.type === 'check_valve' || nb.type === 'check_valve') {
-            const flowDirectionOk = (l.s === n.id)
-              ? (nb.head < n.head)
-              : (nb.head > n.head);
-            if (!flowDirectionOk) continue;
-          }
-
-          const nS = nodeMap.get(l.s);
-          const nE = nodeMap.get(l.e);
-          const R = pipeResistance(l, nS, nE);
-
-          const dH = nb.head - n.head;
-          const sign = dH >= 0 ? 1 : -1;
-          const aH = Math.abs(dH);
-
-          if (aH > 1e-9) {
-            const Q = sign * Math.pow(aH / R, EXP);
-            const dQdH = EXP * Math.abs(Q) / aH; // |∂Q/∂H|
-            sumQ    += Q;
-            sumdQdH += dQdH;
-          }
+    // Initialization & State Setup
+    nodes.forEach(n => {
+        // Convert demand from CMH (m3/h) to CMS (m3/s) for SI Unit Calculation
+        n._demandCMS = (parseFloat(n.demand) || 0) / 3600;
+        
+        // Initial guess for Head
+        if (n.type === 'reservoir' || n.type === 'tank') {
+            n.head = parseFloat(n.elevation); // Boundary Condition (Fixed Head)
+        } else {
+            // Give normal nodes an initial head guess (elevation + standard pressure)
+            n.head = typeof n.head !== 'undefined' && n.head > 0 ? n.head : parseFloat(n.elevation) + 20;
         }
-      }
+        
+        nodeMap.set(n.id, n);
+        adjList.set(n.id, []);
+    });
 
-      // Continuity residual: f(H) = ΣQ_in - Q_demand
-      const dem_m3s = (n.dem || 0) / 3600;
-      const residual = sumQ - dem_m3s;
-      if (Math.abs(residual) > maxRes) maxRes = Math.abs(residual);
+    // 2. Pre-Calculate Hydraulic Constraints (Avoid repetitive calculation)
+    links.forEach(l => {
+        const D_m = parseFloat(l.diameter) / 1000; // Convert mm to m
+        const L = parseFloat(l.length);
+        const C = parseFloat(l.c_value);
 
-      // NR head correction (clamped to ±8 m for stability)
-      if (sumdQdH > 1e-12) {
-        const dH = Math.max(-8, Math.min(8, residual / sumdQdH));
-        n.head += dH;
-      } else if (residual < -1e-9) {
-        n.head = Math.max(n.el, n.head - 1.5);
-      }
+        // Hazen-Williams Resistance factor (R)
+        // h_f = R * |Q|^0.852 * Q
+        // R = 10.67 * L / (C^1.852 * D^4.8704)
+        l._R = (10.67 * L) / (Math.pow(C, 1.852) * Math.pow(D_m, 4.8704));
+        l.flow = 0.0001; // Small initial flow to prevent division by zero in derivative
 
-      // PRV: clamp downstream head to setpoint
-      if (n.type === 'prv') {
-        const target = n.el + (n.setting || 15);
-        if (n.head > target) n.head = n.head * 0.4 + target * 0.6;
-      }
-    }
-
-    // Pump nodes: update head based on pump curve H = H₀ - R·Q²
-    for (const p of nodes) {
-      if (p.type !== 'pump' || !reachable.has(p.id)) continue;
-
-      let Q_net_m3s = 0;
-      const adj = adjacency.get(p.id);
-      if (adj) {
-        for (const { linkId, neighborId } of adj) {
-          const nb = nodeMap.get(neighborId);
-          if (!nb || !reachable.has(neighborId)) continue;
-          const l = linkMap.get(linkId);
-          if (!l) continue;
-          const nS = nodeMap.get(l.s);
-          const nE = nodeMap.get(l.e);
-          const R = pipeResistance(l, nS, nE);
-          const dH = p.head - nb.head;
-          const sign = dH >= 0 ? 1 : -1;
-          const aH = Math.abs(dH);
-          if (aH > 1e-9) Q_net_m3s += sign * Math.pow(aH / R, EXP);
+        // Build Graph Connections (Adjacency List)
+        if (nodeMap.has(l.source) && nodeMap.has(l.target)) {
+            adjList.get(l.source).push({ pipe: l, connectedNode: l.target, dir: 1 }); // 1 = Flow Out
+            adjList.get(l.target).push({ pipe: l, connectedNode: l.source, dir: -1 }); // -1 = Flow In
         }
-      }
+    });
 
-      const Q_m3h = Math.max(0, Q_net_m3s * 3600);
-      const addHead = Math.max(0, (p._pumpH0 || p.pumpHead * 1.33 || 40) - (p.pumpR || 0.001) * Math.pow(Q_m3h, 2));
-      // Relaxed update to avoid oscillation
-      p.head = p.head * 0.82 + (p.el + addHead) * 0.18;
+    // 3. Iterative Solver (Newton-Raphson Method for Flow/Head balance)
+    let iter = 0;
+    let maxHeadChange = Infinity;
+
+    while (iter < MAX_ITER && maxHeadChange > TOLERANCE) {
+        maxHeadChange = 0;
+
+        // Step 3.1: Calculate Flows from current Heads
+        links.forEach(l => {
+            const h1 = nodeMap.get(l.source).head;
+            const h2 = nodeMap.get(l.target).head;
+            const dH = h1 - h2; // Head difference
+
+            // Invert HW equation: Q = sign(dH) * (|dH| / R)^(1/1.852)
+            const exponent = 1 / 1.852;
+            const absFlowCMS = Math.pow(Math.abs(dH) / l._R, exponent);
+            
+            l.flowCMS = dH >= 0 ? absFlowCMS : -absFlowCMS;
+            l.headloss = Math.abs(dH);
+            
+            // Derivative dQ/dH for Newton-Raphson Jacobian approximation
+            // dQ/dH = (1/1.852) * (|dH|/R)^((1/1.852)-1) * (1/R)
+            if (Math.abs(dH) > 0.00001) {
+                l._dQdH = exponent * Math.pow(Math.abs(dH) / l._R, exponent - 1) / l._R;
+            } else {
+                l._dQdH = 0.001; // Minimum numerical limit to prevent infinity
+            }
+        });
+
+        // Step 3.2: Update Node Heads to satisfy Mass Balance (Kirchhoff's First Law)
+        nodes.forEach(n => {
+            // Skip Fixed Head nodes (Reservoirs)
+            if (n.type === 'reservoir' || n.type === 'tank') return;
+
+            let sumFlow = 0;   // Net Flow into the node
+            let sum_dQdH = 0;  // Sum of derivatives
+
+            adjList.get(n.id).forEach(connection => {
+                const pipe = connection.pipe;
+                // dir: 1 means pipe starts here (flow leaves), -1 means pipe ends here (flow enters)
+                // If flow is positive and dir is 1 -> leaving node (-)
+                // If flow is positive and dir is -1 -> entering node (+)
+                const flowEntering = pipe.flowCMS * (-connection.dir);
+                sumFlow += flowEntering;
+                sum_dQdH += pipe._dQdH;
+            });
+
+            // Flow Balance Error = Flow In - Flow Out - Demand
+            const nodeError = sumFlow - n._demandCMS;
+
+            // Newton-Raphson Step: deltaH = Error / Derivative
+            if (sum_dQdH > 0) {
+                const deltaH = nodeError / sum_dQdH;
+                n.head += deltaH * RELAXATION; // Apply relaxation factor
+                
+                maxHeadChange = Math.max(maxHeadChange, Math.abs(deltaH));
+            }
+        });
+
+        iter++;
     }
 
-    if (maxRes < TOL) { converged = true; iters = iter + 1; break; }
-    iters = iter + 1;
-  }
+    // 4. Post-Processing & Output Formatting
+    nodes.forEach(n => {
+        // Calculate final pressure (Head - Elevation)
+        n.pressure = n.head - parseFloat(n.elevation); 
+        
+        // Cleanup internal variables to avoid memory leak / payload bloat
+        delete n._demandCMS;
+    });
 
-  // ── Step 4: Compute node pressures ──
-  nodes.filter(n => n.type === 'check_valve').forEach(cv => cv.cvBlocked = false);
-  nodes.forEach(n => { n.p = Math.max(0, n.head - n.el); });
+    links.forEach(l => {
+        // Convert CMS back to UI Unit (e.g., CMH)
+        l.flow = l.flowCMS * 3600; 
+        
+        // Calculate Velocity V = Q / A (Q in CMS, A in m2)
+        const radius_m = (parseFloat(l.diameter) / 1000) / 2;
+        const area_m2 = Math.PI * Math.pow(radius_m, 2);
+        l.velocity = Math.abs(l.flowCMS) / area_m2;
 
-  // ── Step 5: Compute link flows, velocities, and head losses ──
-  links.forEach(l => {
-    const n1 = nodeMap.get(l.s);
-    const n2 = nodeMap.get(l.e);
-    if (!n1 || !n2) { l.flow=0; l.vel=0; l.hl=0; l.hf=0; l.hm=0; l.re=0; return; }
+        // Cleanup
+        delete l._R;
+        delete l._dQdH;
+        delete l.flowCMS;
+    });
 
-    const isolated = !reachable.has(n1.id) || !reachable.has(n2.id);
-    const closed1  = n1.type === 'valve' && (n1.openPercent ?? 100) === 0;
-    const closed2  = n2.type === 'valve' && (n2.openPercent ?? 100) === 0;
-
-    // Check valve back-flow prevention
-    let cvBlocked = false;
-    if (n1.type === 'check_valve' || n2.type === 'check_valve') {
-      if (n1.head < n2.head) {
-        cvBlocked = true;
-        if (n1.type === 'check_valve') n1.cvBlocked = true;
-        if (n2.type === 'check_valve') n2.cvBlocked = true;
-      }
-    }
-
-    if (isolated || closed1 || closed2 || cvBlocked) {
-      l.flow = 0; l.vel = 0;
-      l.hl = Math.abs(n1.head - n2.head);
-      l.hf = l.hl; l.hm = 0; l.re = 0;
-      return;
-    }
-
-    const D = (l.dia || 100) / 1000; // m
-    const C = l.c || 150;
-    const A = Math.PI * Math.pow(D / 2, 2); // m²
-
-    const dH  = n1.head - n2.head;
-    const aH  = Math.abs(dH);
-    const sign = dH >= 0 ? 1 : -1;
-    const R    = pipeResistance(l, n1, n2);
-    const Q_m3s = aH > 1e-9 ? Math.pow(aH / R, EXP) : 0;
-
-    l.flow = Q_m3s * 3600 * sign;  // m³/h
-    l.vel  = (Q_m3s / A) * sign;   // m/s (signed: positive = n1→n2)
-    l.hl   = aH;                   // total head loss (m)
-    l.hf   = hwResistance(l.len, l.dia || 100, C) * Math.pow(Q_m3s, 1.852); // friction only
-    l.hm   = Math.max(0, aH - l.hf); // minor loss residual
-    l.re   = Math.abs(l.vel) * D / 1.004e-6; // Reynolds number (ν_water @ 20°C = 1.004×10⁻⁶ m²/s)
-  });
-
-  _logger.info(`Solver: ${iters} iters, converged=${converged}, maxRes=${maxRes.toExponential(2)}`);
-  return { iters, converged, maxRes };
-}
+    console.log(`🚀 [Hydraulic Engine] Solved in ${iter} iterations. Tolerance Error: ${maxHeadChange.toFixed(6)} m.`);
+    return { iterations: iter, maxError: maxHeadChange, converged: maxHeadChange <= TOLERANCE };
+};
 
 // ============================================================
 //  UI: EPS TIMELINE CONTROL
