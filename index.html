@@ -2087,48 +2087,18 @@ function buildNodeTooltip(n) {
     const pct = n.openPercent ?? (n.status === 'CLOSED' ? 0 : 100);
     const vc = pct === 0 ? '#ef4444' : pct < 100 ? '#ea580c' : '#22c55e';
     nc += `<b style="color:${vc};">🚰</b> ${pct === 0 ? 'ปิดสนิท' : pct === 100 ? 'เปิดเต็ม' : pct + '% (หรี่)'}<br>`;
-} else if (link.type === 'prv') {
-        // ดึงข้อมูล Node ต้นทาง (ขาเข้า) และปลายทาง (ขาออก)
-        let sourceNode = nodes.find(n => n.id === link.sourceId);
-        let targetNode = nodes.find(n => n.id === link.targetId);
-        
-        if (sourceNode && targetNode) {
-            let H_in = sourceNode.head;
-            let H_out = targetNode.head;
-            
-            // H_set = ค่าระดับพลังงานเป้าหมายที่ขาออก (Elevation + Pressure ที่ตั้งค่าไว้)
-            let H_set = targetNode.elevation + (link.settingPressure || 0);
-
-            // สถานะที่ 1: CLOSED (ปิดวาล์ว ถ้าน้ำพยายามไหลย้อนกลับ)
-            if (H_in <= H_out) {
-                link.status = 'CLOSED';
-                link.flow = 0; // ตัดการไหล
-                link.headloss = 0;
-            }
-            // สถานะที่ 2: OPEN (เปิดสุด เพราะแรงดันขาเข้า น้อยกว่า แรงดันเป้าหมายที่ตั้งไว้)
-            else if (H_in <= H_set) {
-                link.status = 'OPEN';
-                // ปล่อยให้น้ำไหลผ่านตามปกติ (จำลองเหมือนท่อสั้นๆ หรือมี Minor loss เล็กน้อย)
-                // ไม่สามารถล็อก H_out ได้ เพราะแรงดันต้นทางมาไม่พอ
-                let cv = link.cv || 100; // สมมติค่า Cv ของวาล์วที่เปิดสุด
-                link.flow = cv * Math.sqrt(Math.abs(H_in - H_out)); 
-                link.headloss = H_in - H_out;
-            }
-            // สถานะที่ 3: ACTIVE (ทำงานปกติ หรี่ลดแรงดันได้สำเร็จ)
-            else {
-                link.status = 'ACTIVE';
-                
-                // บังคับให้ Node ขาออกมี Head คงที่ตามที่ตั้งไว้
-                targetNode.head = H_set; 
-                targetNode.pressure = link.settingPressure;
-                
-                // คำนวณพลังงานที่ถูกหรี่ทิ้งไป (Headloss ของ PRV)
-                link.headloss = H_in - H_set;
-                
-                // คำนวณ Flow ตามความต้องการของเครือข่ายฝั่งปลายทาง (ระบบลูปจะต้องบาลานซ์ Flow เอง)
-                // การเขียน Flow ตรงนี้อาจขึ้นอยู่กับอัลกอริทึม Newton-Raphson ของคุณ
-            }
-        }
+  } else if (n.type === 'prv') {
+    nc += `<b style="color:#f97316;">PRV Set:</b> ${n.setting}m<br>`;
+  } else if (n.type === 'tank') {
+    const _tkHead = n.el + (n.waterLevel || 0);
+    nc += `<b style="color:#8b5cf6;">💧 Level:</b> ${(n.waterLevel || 0).toFixed(2)}m<br>`;
+    nc += `<b style="color:#7c3aed;">⬆ Total Head:</b> ${_tkHead.toFixed(2)}m<br>`;
+    if (isCalculated) {
+      const _tkFill = n.maxLevel > n.minLevel
+        ? Math.round(((n.waterLevel||0) - n.minLevel) / (n.maxLevel - n.minLevel) * 100)
+        : 0;
+      const _fillColor = _tkFill < 20 ? '#ef4444' : _tkFill < 50 ? '#f59e0b' : '#22c55e';
+      nc += `<b style="color:${_fillColor};">📊 Fill:</b> ${Math.max(0,Math.min(100,_tkFill))}%<br>`;
     }
   } else if (n.type === 'reservoir') {
     nc += `<b style="color:#0891b2;">💧 Water Depth:</b> ${(n.waterLevel || 0).toFixed(2)}m<br>`;
