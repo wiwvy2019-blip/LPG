@@ -160,6 +160,7 @@
     <div class="sys-row"><span class="sys-label">🔴 Demand รวม</span><span class="sys-val" style="color:#f87171;" id="val-demand">—</span></div>
     <div class="sys-divider"></div>
     <div class="sys-row"><span class="sys-label">🟡 Press ต่ำสุด</span><span class="sys-val" style="color:#fbbf24;" id="val-min-p">—</span></div>
+    <div class="sys-row"><span class="sys-label">🔴 Press สูงสุด</span><span class="sys-val" id="val-max-p" style="color:rgba(255,255,255,0.7);">—</span></div>
     <div class="sys-row"><span class="sys-label">📉 HL สูงสุด</span><span class="sys-val" style="color:#f87171;" id="val-max-hl">—</span></div>
     <div class="sys-row"><span class="sys-label">⚡ Velocity max</span><span class="sys-val" style="color:#c084fc;" id="val-max-v">—</span></div>
     <div class="sys-divider"></div>
@@ -426,9 +427,7 @@ const MATERIALS = [
 
 /** Minor Loss Coefficients (dimensionless) */
 const MINOR_K = {
-  check_valve: 2.5,
-  air_valve:   0.5,
-  hydrant:     1.5
+  check_valve: 2.5   // K for check valve (forward-flow minor loss)
 };
 
 /** EPS Configuration */
@@ -477,8 +476,6 @@ const SVG = {
   valve_partial:`<svg width="30" height="30" viewBox="0 0 24 24" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,0.25))"><line x1="6" y1="6" x2="6" y2="18" stroke="#f59e0b" stroke-width="3" stroke-linecap="round"/><line x1="18" y1="6" x2="18" y2="18" stroke="#f59e0b" stroke-width="3" stroke-linecap="round"/><circle cx="12" cy="12" r="5" fill="white" stroke="#f59e0b" stroke-width="3"/></svg>`,
   valve_closed:`<svg width="30" height="30" viewBox="0 0 24 24" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,0.25))"><line x1="6" y1="6" x2="6" y2="18" stroke="#ef4444" stroke-width="3" stroke-linecap="round"/><line x1="18" y1="6" x2="18" y2="18" stroke="#ef4444" stroke-width="3" stroke-linecap="round"/><circle cx="12" cy="12" r="5" fill="white" stroke="#ef4444" stroke-width="3"/></svg>`,
   prv:`<svg width="32" height="32" viewBox="0 0 24 24" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,0.25))"><rect x="1" y="9" width="9" height="6" rx="2" fill="#f97316"/><rect x="14" y="9" width="9" height="6" rx="2" fill="#f97316"/><circle cx="12" cy="12" r="5" fill="#fff7ed" stroke="#f97316" stroke-width="2"/><text x="12" y="16" text-anchor="middle" font-size="7" font-weight="900" fill="#f97316">P</text><path d="M8 12 L10 10 L10 14Z" fill="#f97316"/><path d="M16 12 L14 10 L14 14Z" fill="#f97316"/></svg>`,
-  air_valve:`<svg width="30" height="32" viewBox="0 0 24 26" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,0.25))"><rect x="7" y="12" width="10" height="10" rx="2" fill="#0891b2"/><rect x="5" y="14" width="14" height="5" rx="1" fill="#06b6d4"/><path d="M9 12 L9 7 Q12 4 15 7 L15 12" fill="none" stroke="#06b6d4" stroke-width="2" stroke-linecap="round"/><path d="M7 7 L5 4 M12 6 L12 3 M17 7 L19 4" stroke="#93c5fd" stroke-width="1.5" stroke-linecap="round"/><line x1="12" y1="22" x2="12" y2="26" stroke="#0891b2" stroke-width="2" stroke-linecap="round"/></svg>`,
-  hydrant:`<svg width="30" height="34" viewBox="0 0 24 28" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,0.25))"><rect x="8" y="12" width="8" height="12" rx="1" fill="#dc2626"/><rect x="5" y="15" width="14" height="5" rx="1" fill="#ef4444"/><path d="M10 12 L10 8 Q12 6 14 8 L14 12" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linecap="round"/><rect x="9" y="6" width="6" height="3" rx="1" fill="#b91c1c"/><circle cx="12" cy="5" r="2" fill="#b91c1c"/><line x1="5" y1="17.5" x2="2" y2="17.5" stroke="#dc2626" stroke-width="2" stroke-linecap="round"/><line x1="19" y1="17.5" x2="22" y2="17.5" stroke="#dc2626" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="24" x2="12" y2="28" stroke="#b91c1c" stroke-width="3" stroke-linecap="round"/></svg>`,
   check_valve: (angleDeg=0, blocked=false) => {
     const blockedClass = blocked ? 'cv-blocked' : '';
     const arrowAni = !blocked ? 'cv-arrow-ani' : '';
@@ -507,8 +504,6 @@ const TYPE_ICONS = {
   pump:`<svg width="20" height="20" viewBox="0 0 26 26"><circle cx="13" cy="13" r="9" fill="#22c55e"/><path d="M13 13 L13 6 Q17 9 13 13Z" fill="white" opacity="0.9"/></svg>`,
   valve:`<svg width="20" height="20" viewBox="0 0 24 24"><line x1="6" y1="6" x2="6" y2="18" stroke="#22c55e" stroke-width="3" stroke-linecap="round"/><line x1="18" y1="6" x2="18" y2="18" stroke="#22c55e" stroke-width="3" stroke-linecap="round"/><circle cx="12" cy="12" r="5" fill="white" stroke="#22c55e" stroke-width="2"/></svg>`,
   prv:`<svg width="20" height="20" viewBox="0 0 24 24"><rect x="1" y="9" width="9" height="6" rx="2" fill="#f97316"/><rect x="14" y="9" width="9" height="6" rx="2" fill="#f97316"/><circle cx="12" cy="12" r="5" fill="#fff7ed" stroke="#f97316" stroke-width="2"/><text x="12" y="16" text-anchor="middle" font-size="7" font-weight="900" fill="#f97316">P</text></svg>`,
-  air_valve:`<svg width="18" height="20" viewBox="0 0 24 26"><rect x="7" y="12" width="10" height="10" rx="2" fill="#0891b2"/><path d="M9 12 L9 7 Q12 4 15 7 L15 12" fill="none" stroke="#06b6d4" stroke-width="2"/></svg>`,
-  hydrant:`<svg width="18" height="20" viewBox="0 0 24 28"><rect x="8" y="12" width="8" height="12" rx="1" fill="#dc2626"/><rect x="5" y="15" width="14" height="4" rx="1" fill="#ef4444"/></svg>`,
   check_valve:`<svg width="26" height="18" viewBox="0 0 44 30"><rect x="0" y="12" width="10" height="6" rx="2" fill="#0d9488"/><rect x="34" y="12" width="10" height="6" rx="2" fill="#0d9488"/><rect x="9" y="5" width="26" height="20" rx="4" fill="#ccfbf1" stroke="#0d9488" stroke-width="2"/><polygon points="20,8 33,15 20,22" fill="#0d9488"/></svg>`,
   pipe:`<i class="fas fa-minus" style="color:#64748b;font-size:16px;"></i>`
 };
@@ -516,7 +511,7 @@ const TYPE_ICONS = {
 const TYPE_NAMES = {
   junction:'จุดต่อ (Junction)', tank:'ถังสูง (Tank)', reservoir:'แหล่งน้ำ (Reservoir)',
   pump:'ปั๊มน้ำ (Pump)', valve:'ประตูน้ำ (Gate Valve)', prv:'PRV (ลดแรงดัน)',
-  air_valve:'แอร์วาล์ว', hydrant:'หัวดับเพลิง', check_valve:'เช็ควาล์ว', pipe:'ท่อน้ำ (Pipe)'
+  check_valve:'เช็ควาล์ว', pipe:'ท่อน้ำ (Pipe)'
 };
 
 // ============================================================
@@ -529,6 +524,7 @@ const TYPE_NAMES = {
  * Node schema:
  * { id, type, lat, lng, el, baseDem,
  * status, setting, waterLevel, tankDia, maxLevel, minLevel,
+ * prvInlet (upstream node ID), prvSchedule (array[25] of hourly settings),
  * pumpHead, pumpFlow, pumpStatus, pumpSchedule, prvSize, openPercent,
  * cvFlowAngle, cvBlocked, history }
  *
@@ -1199,13 +1195,7 @@ function pipeResistance(link, nodeS, nodeE) {
         K_total += valveKFactor(n.openPercent ?? (n.status === 'CLOSED' ? 0 : 100));
         break;
       case 'check_valve':
-        K_total += MINOR_K.check_valve;           // backward flow already blocked in solver
-        break;
-      case 'air_valve':
-        K_total += MINOR_K.air_valve;
-        break;
-      case 'hydrant':
-        K_total += MINOR_K.hydrant * 0.5;         // partially open during normal operation
+        K_total += MINOR_K.check_valve;   // check valve forward-flow minor loss
         break;
     }
   });
@@ -1652,30 +1642,73 @@ function _solveHydraulics(hourOfDay) {
       const absRes   = Math.abs(residual);
       if (absRes > maxRes) maxRes = absRes;
 
-      // Newton-Raphson head correction:
-      //   ΔH = -f / f'  =  -residual / sumdQdH
-      // Apply with SOR factor omega and clamp to prevent large steps
+      // ── Newton-Raphson head update ─────────────────────────────────────────
+      // สมการ: ΔH = residual / Σ|∂Q/∂H|
+      //   residual > 0 → ΣQ_in มากเกิน → ต้องยก H_n ขึ้น เพื่อลด ΔH → ลด Q_in ✓
+      //   residual < 0 → ΣQ_in น้อยเกิน → ต้องลด H_n ลง เพื่อเพิ่ม Q_in  ✓
+      //
+      // Headroom-aware clamp:
+      //   จำกัด step ≤ 40% ของ head span ระหว่าง node กับ neighbor ที่ใกล้ที่สุด
+      //   ป้องกันการ overshoot ในช่วง iteration แรกๆ ที่ initial guess ห่างจาก solution
       if (sumdQdH > 1e-14) {
-        // [FIX]: correct sign: if residual > 0 (too much inflow), raise H to reduce Q in
-        const rawDH = residual / sumdQdH;  // NR step (positive = raise head)
-        const clampDH = Math.max(-10.0, Math.min(10.0, rawDH));
+        // คำนวณ headroom จาก adjacent nodes
+        let _maxAdjDH = 1.0;
+        if (adj) {
+          for (const { neighborId: _nid } of adj) {
+            const _nb2 = nodeMap.get(_nid);
+            if (_nb2 && reachable.has(_nid)) {
+              const _dh2 = Math.abs(_nb2.head - n.head);
+              if (_dh2 > _maxAdjDH) _maxAdjDH = _dh2;
+            }
+          }
+        }
+        const rawDH = residual / sumdQdH;
+        // Cap step ที่ 40% ของ headroom หรือ 5m อย่างใดน้อยกว่า
+        const stepCap = Math.min(5.0, 0.4 * _maxAdjDH);
+        const clampDH = Math.max(-stepCap, Math.min(stepCap, rawDH));
         n.head += omega * clampDH;
-        // Hard floor: head cannot drop below elevation (no negative pressure allowed by physics
-        // unless tank system creates siphon — we guard conservatively here)
-        // Note: EPANET allows negative pressure but reports it as warning.
-        // We allow it for fidelity but clamp to el - 20m (extreme siphon)
+        // ห้าม head ต่ำกว่า el - 20m (ขีดจำกัด siphon)
         n.head = Math.max(n.el - 20.0, n.head);
       } else if (residual < -1e-9) {
-        // Degenerate: demand exceeds available flow → lower head gently
+        // Degenerate: demand เกิน supply → ลด head ทีละน้อย
         n.head = Math.max(n.el - 20.0, n.head - 0.5 * omega);
       }
 
-      // PRV (Pressure Reducing Valve): enforce downstream head ≤ setpoint
-      // PRV acts like a fixed-head node when upstream pressure exceeds setting.
-      // [FIX]: Apply as hard constraint after NR step, not as blended relaxation.
+      // ── PRV (Pressure Reducing Valve) — Logic ตามหลักวิศวกรรมจริง ──────────
+      // PRV มีสองโหมด:
+      //   1. Active: H_upstream > (el + setting) → PRV throttle → H_downstream = el + setting
+      //   2. Passive: H_upstream ≤ (el + setting) → PRV เปิดเต็มที่ (pass-through, ไม่ throttle)
+      // PRV ไม่อนุญาตการไหลย้อน (ตรวจ inlet direction ด้วย)
+      //
+      // EPS-aware: ใช้ prvSchedule[hour] ถ้ามีกำหนด, มิฉะนั้นใช้ setting คงที่
       if (n.type === 'prv') {
-        const prvHead = n.el + (n.setting || 15.0);
-        if (n.head > prvHead) n.head = prvHead;  // clamp to setpoint
+        // ดึง setting ของชั่วโมงนี้ (EPS schedule หรือ static)
+        const prvSetting = (n.prvSchedule && n.prvSchedule[h] !== undefined && n.prvSchedule[h] !== null)
+          ? parseFloat(n.prvSchedule[h])
+          : (n.setting || 15.0);
+        const prvDownstreamHead = n.el + Math.max(0, prvSetting);
+
+        // หา upstream head: ถ้ากำหนด prvInlet ให้ใช้ head ของ node นั้น
+        // ถ้าไม่กำหนด: ใช้ head สูงสุดของ neighbor ที่เชื่อมอยู่เป็น upstream
+        let H_upstream = n.head;
+        const _adj = adjacency.get(n.id);
+        if (n.prvInlet && nodeMap.has(n.prvInlet)) {
+          H_upstream = nodeMap.get(n.prvInlet).head || n.head;
+        } else if (_adj) {
+          // หาก upstream ไม่ได้กำหนด: node ที่มี head สูงกว่า PRV node = upstream
+          for (const { neighborId } of _adj) {
+            const _nb = nodeMap.get(neighborId);
+            if (_nb && _nb.head > H_upstream) H_upstream = _nb.head;
+          }
+        }
+
+        if (H_upstream > prvDownstreamHead) {
+          // Active mode: PRV throttle downstream head ให้ = setting
+          n.head = prvDownstreamHead;
+        }
+        // Passive mode: H_upstream ≤ setting → ไม่ throttle (n.head คงเดิมจาก NR)
+        // ในทั้งสองกรณี: ห้ามไหลย้อน (downstream ต้องไม่สูงกว่า upstream)
+        if (n.head > H_upstream) n.head = H_upstream;  // ป้องกันการไหลย้อน
       }
     }
 
@@ -1909,33 +1942,58 @@ function updateSummaryUI() {
   let totD = 0, totS = 0, maxHL = 0, maxV = 0;
   nodes.forEach(n => { if ((n.dem || 0) > 0) totD += n.dem; });
 
-  // สมดุลน้ำ: Supply = ผลรวมการไหลออกจาก source nodes (Reservoir/Tank/Pump)
-  // นับเฉพาะ link ที่เชื่อมระหว่าง source กับ non-source เท่านั้น (ไม่นับซ้ำ)
+  // ── Supply: วนลูปจาก Source Nodes → sum net outflow (แก้ double-count) ──
   const _SRC_SET = new Set(['reservoir','tank','pump']);
-  const _countedSrcLinks = new Set();
+  const _seenLinks = new Set();
   links.forEach(l => {
     const n1 = nodeMap.get(l.s), n2 = nodeMap.get(l.e);
     if (!n1 || !n2) return;
     if (l.hl > maxHL) maxHL = l.hl;
     if (Math.abs(l.vel) > maxV) maxV = Math.abs(l.vel);
-    if (_countedSrcLinks.has(l.id)) return;
-    const src1 = _SRC_SET.has(n1.type);
-    const src2 = _SRC_SET.has(n2.type);
-    // l.flow > 0 หมายถึงน้ำไหล n1→n2, < 0 หมายถึง n2→n1
-    if (src1 && !src2) { totS += Math.max(0, l.flow); _countedSrcLinks.add(l.id); }
-    if (src2 && !src1) { totS += Math.max(0, -l.flow); _countedSrcLinks.add(l.id); }
+  });
+  nodes.filter(n => _SRC_SET.has(n.type)).forEach(src => {
+    const adj2 = adjacency.get(src.id);
+    if (!adj2) return;
+    for (const { linkId } of adj2) {
+      if (_seenLinks.has(linkId)) continue;
+      const l = linkMap.get(linkId);
+      if (!l) continue;
+      const n1 = nodeMap.get(l.s), n2 = nodeMap.get(l.e);
+      if (!n1 || !n2) continue;
+      if (_SRC_SET.has(n1.type) && _SRC_SET.has(n2.type)) continue; // source-source link
+      const outflow = (l.s === src.id) ? l.flow : -l.flow;
+      if (outflow > 0) totS += outflow;
+      _seenLinks.add(linkId);
+    }
   });
 
-  const jns = nodes.filter(n => !['reservoir','tank','pump'].includes(n.type));
-  let minP_m = jns.length > 0 ? Infinity : 0;
-  jns.forEach(n => { if ((n.p || 0) < minP_m) minP_m = n.p; });
-  const minP_bar = minP_m === Infinity ? 0 : minP_m / 10.197;
+  // ── Min/Max Pressure: ข้าม isolated nodes ที่มี p=0 แต่ไม่มีน้ำไหลจริง ──
+  const jns = nodes.filter(n => !_SRC_SET.has(n.type));
+  let minP_m = Infinity, maxP_m = -Infinity;
+  jns.forEach(n => {
+    const adj3 = adjacency.get(n.id);
+    const hasFlow = adj3 && [...adj3].some(({ linkId }) => {
+      const l = linkMap.get(linkId);
+      return l && Math.abs(l.flow || 0) > 0.001;
+    });
+    if (!hasFlow && (n.p || 0) === 0) return;  // skip isolated zero
+    const pv = n.p || 0;
+    if (pv < minP_m) minP_m = pv;
+    if (pv > maxP_m) maxP_m = pv;
+  });
+  const minP_bar = minP_m === Infinity  ? 0 : minP_m / 10.197;
+  const maxP_bar = maxP_m === -Infinity ? 0 : maxP_m / 10.197;
 
   document.getElementById('sysHdrTitle').innerText =
     isEPSComputed ? `⚡ Status @ ${currentTimeStep.toString().padStart(2,'0')}:00` : '⚡ System Status';
   document.getElementById('val-supply').innerText  = totS.toFixed(2) + ' m³/h';
   document.getElementById('val-demand').innerText  = totD.toFixed(2) + ' m³/h';
   document.getElementById('val-min-p').innerText   = minP_bar.toFixed(2) + ' bar';
+  const _maxPEl = document.getElementById('val-max-p');
+  if (_maxPEl) {
+    _maxPEl.innerText   = maxP_bar.toFixed(2) + ' bar';
+    _maxPEl.style.color = maxP_bar > 10 ? '#f87171' : maxP_bar > 7 ? '#fb923c' : 'rgba(255,255,255,0.7)';
+  }
   document.getElementById('val-max-hl').innerText  = maxHL.toFixed(3) + ' m';
   document.getElementById('val-max-v').innerText   = maxV.toFixed(2) + ' m/s';
   document.getElementById('val-count').innerText   = nodes.length + ' / ' + links.length;
@@ -2021,10 +2079,18 @@ function getNodeIcon(n) {
         dotColor = '#fbbf24'; // เหลืองส้ม (0.4–0.5 บาร์)
       }
       wrapClass = '';
-    } else {
-      // ปกติ: ≥ 0.5 บาร์ — สีเขียว
+    } else if (pbar <= 7.0) {
+      // ปกติ: 0.5–7.0 บาร์ — สีเขียว (ช่วงมาตรฐาน)
       dotColor = '#22c55e';
       wrapClass = '';
+    } else if (pbar <= 10.0) {
+      // สูง: 7–10 บาร์ — ส้มเข้ม (ใกล้ขีดสูงสุด PN10)
+      dotColor = '#ea580c';
+      wrapClass = '';
+    } else {
+      // OVERPRESSURE: > 10 บาร์ — ม่วง + กระพริบ (เกิน PN10 ท่อ PE/PVC)
+      dotColor = '#9333ea';
+      wrapClass = 'node-critical-blink';
     }
   }
 
@@ -2042,8 +2108,7 @@ function getNodeIcon(n) {
     return `<div class="node-svg-wrap">${SVG.pump(_pumpOn)}</div>`;
   }
   if (n.type === 'prv')         return `<div class="node-svg-wrap">${SVG.prv}</div>`;
-  if (n.type === 'air_valve')   return `<div class="node-svg-wrap">${SVG.air_valve}</div>`;
-  if (n.type === 'hydrant')     return `<div class="node-svg-wrap">${SVG.hydrant}</div>`;
+
   if (n.type === 'check_valve') return `<div class="node-svg-wrap" style="overflow:visible;">${SVG.check_valve(n.cvFlowAngle || 0, n.cvBlocked || false)}</div>`;
   if (n.type === 'valve') {
     const pct = n.openPercent ?? (n.status === 'CLOSED' ? 0 : 100);
@@ -2088,7 +2153,11 @@ function buildNodeTooltip(n) {
     const vc = pct === 0 ? '#ef4444' : pct < 100 ? '#ea580c' : '#22c55e';
     nc += `<b style="color:${vc};">🚰</b> ${pct === 0 ? 'ปิดสนิท' : pct === 100 ? 'เปิดเต็ม' : pct + '% (หรี่)'}<br>`;
   } else if (n.type === 'prv') {
-    nc += `<b style="color:#f97316;">PRV Set:</b> ${n.setting}m<br>`;
+    const _prvH = isEPSComputed ? currentTimeStep : 0;
+    const _prvSetting = (n.prvSchedule && n.prvSchedule[_prvH] !== null && n.prvSchedule[_prvH] !== undefined)
+      ? n.prvSchedule[_prvH] : (n.setting || 15);
+    nc += `<b style="color:#f97316;">PRV Setting:</b> ${parseFloat(_prvSetting).toFixed(1)}m (${(parseFloat(_prvSetting)/10.197).toFixed(2)} bar)<br>`;
+    if (n.prvInlet) nc += `<b style="color:#0891b2;">⬆ Upstream:</b> ${n.prvInlet}<br>`;
   } else if (n.type === 'tank') {
     const _tkHead = n.el + (n.waterLevel || 0);
     nc += `<b style="color:#8b5cf6;">💧 Level:</b> ${(n.waterLevel || 0).toFixed(2)}m<br>`;
@@ -2114,7 +2183,7 @@ function buildNodeTooltip(n) {
 
   if ((n.dem || 0) > 0) nc += `<b style="color:#dc2626;">Dem:</b> ${n.dem.toFixed(2)} m³/h<br>`;
   nc += `<b style="color:#475569;">Elev:</b> ${n.el.toFixed(2)}m<br>`;
-  if (isCalculated && !['valve','air_valve','check_valve'].includes(n.type)) {
+  if (isCalculated && !['valve','check_valve'].includes(n.type)) {
     nc += `<b style="color:#f97316;">Press:</b> ${p_bar.toFixed(2)} bar<br>`;
     nc += `<b style="color:#059669;">Head:</b> ${(n.head || 0).toFixed(2)}m`;
   }
@@ -2212,7 +2281,6 @@ function render() {
     // Junction dots use a fixed small size; equipment icons use their natural size.
     // All sizes are in CSS pixels (screen-space), so they never grow when zooming out.
     const isSz = n.type==='tank'?[40,44]:n.type==='reservoir'?[40,36]:n.type==='pump'?[40,40]:
-                 n.type==='hydrant'?[32,38]:n.type==='air_valve'?[32,36]:
                  n.type==='check_valve'?[46,32]:
                  n.type==='junction'?(()=>{const _z=map?map.getZoom():0;return _z>=15?[28,30]:[22,22];})():
                  n.type==='valve'?[22,22]:n.type==='prv'?[22,22]:[22,22];
@@ -2294,6 +2362,36 @@ function updateMaterialInfo() {
   }
 }
 
+// PRV Schedule helper functions
+function prvSchedInput(nodeId, hour, val) {
+  const n = nodeMap.get(nodeId);
+  if (!n) return;
+  if (!n.prvSchedule) n.prvSchedule = Array(25).fill(null);
+  const parsed = parseFloat(val);
+  n.prvSchedule[hour] = isNaN(parsed) ? null : parsed;
+  // Update input border colour: orange = custom, grey = default
+  const inp = document.getElementById(`prv_sch_${hour}`);
+  if (inp) {
+    const isCustom = n.prvSchedule[hour] !== null;
+    inp.style.borderColor   = isCustom ? '#f97316' : '#e2e8f0';
+    inp.style.background    = isCustom ? '#fff7ed' : 'white';
+  }
+}
+function prvSchedReset(nodeId) {
+  const n = nodeMap.get(nodeId);
+  if (!n) return;
+  n.prvSchedule = null;
+  // Refresh prop panel
+  openProp(nodeId, 'node');
+}
+function prvSchedCopy(nodeId) {
+  const n = nodeMap.get(nodeId);
+  if (!n) return;
+  // Fill all hours with the static setting value
+  n.prvSchedule = Array(25).fill(n.setting || 15);
+  openProp(nodeId, 'node');
+}
+
 function updatePRVInfo() {
   const si = document.getElementById('i_prv_size');
   const fs = document.getElementById('prv_max_flow');
@@ -2334,7 +2432,7 @@ function openProp(id, type) {
   if (isCalculated) {
     if (type === 'node') {
       const pb = (el.p || 0) / 10.197;
-      const pColor = pb <= 0 ? '#374151' : pb <= 0.5 ? '#ef4444' : pb < 1 ? '#f97316' : '#22c55e';
+      const pColor = pb <= 0 ? '#374151' : pb < 0.5 ? '#ef4444' : pb < 1 ? '#f97316' : pb <= 7 ? '#22c55e' : pb <= 10 ? '#ea580c' : '#9333ea';
       res = `<div class="panel-res-box">
         <div class="res-item"><span class="res-label">📊 Total Head</span><span class="res-val">${(el.head || 0).toFixed(3)} m</span></div>
         <div class="res-item"><span class="res-label">🟡 Pressure</span><span class="res-val" style="color:${pColor};">${pb.toFixed(3)} bar (${(el.p || 0).toFixed(2)} mWC)</span></div>
@@ -2376,12 +2474,63 @@ function openProp(id, type) {
       const cps = el.prvSize || 100;
       const pso = PIPE_SIZES.filter(s => s >= 40 && s <= 600).map(s => `<option value="${s}" ${cps == s ? 'selected' : ''}>${s} mm</option>`).join('');
       const imf = ((Math.PI * Math.pow(cps / 2000, 2)) * 2.5 * 3600).toFixed(1);
-      h += `<div style="background:#fff7ed;border:1.5px solid #fed7aa;border-radius:14px;padding:14px;">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
-          <div><label style="font-size:10px;font-weight:800;color:#ea580c;text-transform:uppercase;display:block;margin-bottom:6px;font-family:var(--sans);">⬇️ Target Head (m)</label><input id="i_set" type="number" step="0.1" value="${el.setting || 15}" class="eng-input" style="border-color:#fed7aa;"></div>
-          <div><label style="font-size:10px;font-weight:800;color:#ea580c;text-transform:uppercase;display:block;margin-bottom:6px;font-family:var(--sans);">🔧 PRV Size</label><select id="i_prv_size" class="eng-input" style="border-color:#fed7aa;" onchange="updatePRVInfo()">${pso}</select></div>
+      // ตัวเลือก upstream node
+      const upstreamOpts = [
+        `<option value="">-- อัตโนมัติ (ใช้ node ที่มีแรงดันสูงสุด) --</option>`,
+        ...nodes
+          .filter(nx => nx.id !== el.id)
+          .map(nx => `<option value="${nx.id}" ${el.prvInlet === nx.id ? 'selected' : ''}>${TYPE_NAMES[nx.type]||nx.type} (el=${nx.el.toFixed(1)}m)</option>`)
+      ].join('');
+      // PRV schedule cells
+      const prvSched = el.prvSchedule || Array(25).fill(null);
+      const prvSchedCells = Array.from({length:25}, (_, i) => {
+        const v = prvSched[i];
+        const useCustom = v !== null && v !== undefined;
+        const dispVal = useCustom ? parseFloat(v).toFixed(1) : (el.setting || 15).toFixed(1);
+        return `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
+          <div style="font-size:7.5px;font-weight:700;color:#94a3b8;font-family:var(--mono);">${i.toString().padStart(2,'0')}h</div>
+          <input type="number" step="0.5" min="0" max="100"
+            id="prv_sch_${i}" value="${dispVal}"
+            style="width:38px;padding:2px 3px;font-size:9px;font-weight:700;border:1.5px solid ${useCustom?'#f97316':'#e2e8f0'};border-radius:5px;text-align:center;font-family:var(--mono);outline:none;background:${useCustom?'#fff7ed':'white'};"
+            oninput="prvSchedInput('${el.id}',${i},this.value)">
+        </div>`;
+      }).join('');
+      h += `<div style="background:#fff7ed;border:1.5px solid #fed7aa;border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:12px;">
+        <div style="font-size:10px;font-weight:800;color:#ea580c;text-transform:uppercase;font-family:var(--sans);">⬇️ PRV — Pressure Reducing Valve</div>
+
+        <div style="background:#fef9ef;border:1px solid #fed7aa;border-radius:10px;padding:8px;font-size:9px;color:#78350f;line-height:1.6;font-family:var(--sans);">
+          <b>หลักการทำงาน:</b> น้ำไหลทางเดียว (Upstream→Downstream)<br>
+          ถ้าแรงดัน Upstream > Setting → PRV ลดแรงดัน Downstream = Setting<br>
+          ถ้าแรงดัน Upstream ≤ Setting → PRV เปิดเต็มที่ (pass-through)<br>
+          ✓ ป้องกันการไหลย้อนในตัว
         </div>
-        <p style="font-size:9.5px;color:#78350f;font-family:var(--mono);">Dia <b id="prv_sz_lbl">${cps}</b>mm → Q_max ~<b id="prv_max_flow">${imf}</b> m³/h</p>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div><label style="font-size:10px;font-weight:800;color:#ea580c;text-transform:uppercase;display:block;margin-bottom:6px;font-family:var(--sans);">⬇️ Setting แรงดัน (m)</label>
+            <input id="i_set" type="number" step="0.5" min="0" max="200" value="${el.setting || 15}" class="eng-input" style="border-color:#fed7aa;">
+            <div style="font-size:8.5px;color:#92400e;margin-top:3px;">${((el.setting||15)/10.197).toFixed(2)} bar downstream</div>
+          </div>
+          <div><label style="font-size:10px;font-weight:800;color:#ea580c;text-transform:uppercase;display:block;margin-bottom:6px;font-family:var(--sans);">🔧 ขนาด PRV</label>
+            <select id="i_prv_size" class="eng-input" style="border-color:#fed7aa;" onchange="updatePRVInfo()">${pso}</select>
+            <div style="font-size:8.5px;color:#92400e;margin-top:3px;">Q_max ~<b id="prv_max_flow">${imf}</b> m³/h</div>
+          </div>
+        </div>
+
+        <div>
+          <label style="font-size:10px;font-weight:800;color:#ea580c;text-transform:uppercase;display:block;margin-bottom:6px;font-family:var(--sans);">⬆️ กำหนด Upstream Node (ทางน้ำเข้า)</label>
+          <select id="i_prv_inlet" class="eng-input" style="border-color:#fed7aa;">${upstreamOpts}</select>
+          <div style="font-size:8.5px;color:#92400e;margin-top:3px;">กำหนดทิศทางน้ำไหล: node ที่เลือก = ด้านแรงดันสูง (upstream)</div>
+        </div>
+
+        <div>
+          <div style="font-size:10px;font-weight:800;color:#7c3aed;text-transform:uppercase;margin-bottom:6px;font-family:var(--sans);">🕐 ตารางแรงดัน Setting 25 ชม. (ว่าง = ใช้ค่าด้านบน)</div>
+          <div style="font-size:8.5px;color:#64748b;margin-bottom:8px;">กำหนด Setting (m) แต่ละชั่วโมง เพื่อควบคุมแรงดันตามเวลา เช่น ลดแรงดันตอนกลางคืน</div>
+          <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;overflow-x:auto;">${prvSchedCells}</div>
+          <div style="display:flex;gap:6px;margin-top:8px;">
+            <button onclick="prvSchedReset('${el.id}')" style="flex:1;padding:5px;border-radius:8px;border:1px solid #fed7aa;background:#fff7ed;color:#92400e;font-size:9.5px;font-weight:800;cursor:pointer;font-family:var(--sans);">↩ รีเซ็ตทั้งหมด</button>
+            <button onclick="prvSchedCopy('${el.id}')" style="flex:1;padding:5px;border-radius:8px;border:1px solid #fed7aa;background:#fff7ed;color:#92400e;font-size:9.5px;font-weight:800;cursor:pointer;font-family:var(--sans);">📋 ใช้ค่าเดิมทั้งหมด</button>
+          </div>
+        </div>
       </div>`;
     } else if (el.type === 'pump') {
       const pumpIsOn = el.pumpStatus !== 'OFF';
@@ -2446,7 +2595,7 @@ function openProp(id, type) {
       </div>`;
       h += inp('i_wl','💧 Water Depth (m)',el.waterLevel || 20);
       h += `<div style="font-size:9px;color:#64748b;margin-top:4px;font-family:var(--mono);">* Total Head = Elevation (${el.el.toFixed(1)}m) + Depth = ${_rsvHead}m</div>`;
-    } else if (!['air_valve','hydrant'].includes(el.type)) {
+    } else if (el.type === 'junction') {
       h += inp('i_dem','🔴 Base Demand (m³/h)', el.baseDem ?? el.dem ?? 0);
       h += `<div style="font-size:9px;color:#64748b;margin-top:4px;">*ผูกกับ Diurnal Pattern อัตโนมัติในโหมด EPS</div>`;
     }
@@ -2546,6 +2695,7 @@ function saveProp() {
   if (isN) {
     if (v('i_el')           !== null) el.el           = parseFloat(v('i_el')) || 0;
     if (v('i_set')          !== null) el.setting       = parseFloat(v('i_set')) || 15;
+    if (v('i_prv_inlet')    !== null) el.prvInlet      = v('i_prv_inlet') || null;
     if (v('i_prv_size')     !== null) el.prvSize       = parseFloat(v('i_prv_size')) || 100;
     if (v('i_valve_open')   !== null) { el.openPercent = parseInt(v('i_valve_open')); el.status = el.openPercent === 0 ? 'CLOSED' : 'OPEN'; }
     if (v('i_wl')           !== null) el.waterLevel    = parseFloat(v('i_wl')) || 0;
@@ -2721,7 +2871,7 @@ function insertAcc(type) {
   const elUp   = sNode.el + tUp * (eNode.el - sNode.el);
   const elDn   = sNode.el + tDn * (eNode.el - sNode.el);
 
-  const prefixes = { valve:'V', prv:'PRV', air_valve:'AV', hydrant:'HYD', check_valve:'CV' };
+  const prefixes = { valve:'V', prv:'PRV', check_valve:'CV' };
 
   // Helper to build a bare node object
   const makeNode = (id, nodeType, lat, lng, el, extra) => ({
@@ -2729,6 +2879,8 @@ function insertAcc(type) {
     baseDem: 0, dem: 0, head: 0, p: 0,
     status: 'OPEN', setting: 15.0,
     prvSize: dia, openPercent: 100,
+    prvInlet: null,          // node ID ของ upstream (ทางน้ำเข้า PRV) — null = ยังไม่กำหนด
+    prvSchedule: null,       // array[25] ของ setting (m) ต่อชั่วโมง — null = ใช้ setting คงที่
     waterLevel: 10, tankDia: 10, maxLevel: 15, minLevel: 0.5,
     pumpHead: 30, pumpFlow: 100,
     pumpStatus: 'ON', pumpSchedule: Array(24).fill(1),
@@ -2748,8 +2900,8 @@ function insertAcc(type) {
   // ── 5. Create Accessory node ─────────────────────────────────────────────────
   const accId = (prefixes[type] || 'X') + (Date.now() + 1).toString(36);
   const acc = makeNode(accId, type, snapLat, snapLng, elSnap, {
-    baseDem: type === 'hydrant' ? 10 : 0,
-    dem:     type === 'hydrant' ? 10 : 0,
+    baseDem: 0,
+    dem:     0,
   });
   nodes.push(acc);
   nodeMap.set(accId, acc);
@@ -2805,11 +2957,22 @@ function velBadge(v) {
   return `<span class="badge badge-crit">${av.toFixed(2)} ⚠</span>`;
 }
 
+/**
+ * Pressure badge — แสดงช่วงแรงดันตามมาตรฐานระบบประปา (ISO 10508 / AWWA M51)
+ *   ≤ 0 bar    → ไม่มีแรงดัน (Critical)
+ *   0–0.5 bar  → ต่ำกว่ามาตรฐานบริการขั้นต่ำ
+ *   0.5–1.0    → ต่ำ (ยอมรับได้สำหรับอาคารชั้นเดียว)
+ *   1.0–7.0    → ปกติ (ช่วงปฏิบัติการมาตรฐาน 2–5 bar เหมาะสมที่สุด)
+ *   7.0–10.0   → สูง (ใกล้ขีดสูงสุด PN10 ท่อ PE/PVC)
+ *   > 10.0     → OVERPRESSURE — เกิน PN10 อาจทำให้ท่อแตก
+ */
 function pressBadge(p_bar) {
-  if (p_bar <= 0)  return `<span class="badge badge-no-p">0 bar</span>`;
-  if (p_bar < 0.5) return `<span class="badge badge-low-p">${p_bar.toFixed(2)} bar</span>`;
-  if (p_bar < 1.0) return `<span class="badge badge-warn">${p_bar.toFixed(2)} bar</span>`;
-  return `<span class="badge badge-ok">${p_bar.toFixed(2)} bar</span>`;
+  if (p_bar <= 0)    return `<span class="badge badge-no-p">0 bar ⛔</span>`;
+  if (p_bar < 0.5)   return `<span class="badge badge-low-p">${p_bar.toFixed(2)} bar ⬇</span>`;
+  if (p_bar < 1.0)   return `<span class="badge badge-warn">${p_bar.toFixed(2)} bar</span>`;
+  if (p_bar <= 7.0)  return `<span class="badge badge-ok">${p_bar.toFixed(2)} bar</span>`;
+  if (p_bar <= 10.0) return `<span class="badge badge-fast">${p_bar.toFixed(2)} bar ⬆ HIGH</span>`;
+  return `<span class="badge badge-crit">${p_bar.toFixed(2)} bar 🔴 OVER</span>`;
 }
 
 function openReport() {
@@ -2909,7 +3072,9 @@ async function generateAISummary() {
   aiBody.innerHTML = '<div style="text-align:center;padding:50px;"><i class="fas fa-spinner fa-spin" style="font-size:40px;color:#8b5cf6;"></i><div style="margin-top:16px;font-weight:800;font-family:var(--sans);">✨ AI กำลังเขียนบทสรุปสำหรับผู้บริหาร...</div></div>';
 
   const jns = nodes.filter(n => !['reservoir','tank'].includes(n.type));
-  const lowPressureNodes = jns.filter(n => ((n.p || 0) / 10.197) < 0.5).map(n => `ID: ${n.id} (${((n.p||0)/10.197).toFixed(2)} bar)`).join(', ');
+  const lowPressureNodes  = jns.filter(n => ((n.p||0)/10.197) < 0.5).map(n=>`ID:${n.id}(${((n.p||0)/10.197).toFixed(2)} bar)`).join(', ');
+  const highPressureNodes = jns.filter(n => ((n.p||0)/10.197) > 7.0 && ((n.p||0)/10.197) <= 10.0).map(n=>`ID:${n.id}(${((n.p||0)/10.197).toFixed(2)} bar)`).join(', ');
+  const overPressureNodes = jns.filter(n => ((n.p||0)/10.197) > 10.0).map(n=>`ID:${n.id}(${((n.p||0)/10.197).toFixed(2)} bar)`).join(', ');
   const highVelPipes     = links.filter(l => Math.abs(l.vel || 0) > 1.5).map(l => `ID: ${l.id} (${Math.abs(l.vel).toFixed(2)} m/s, dia ${l.dia}mm)`).join(', ');
 
   const dataStr = `
@@ -2923,7 +3088,9 @@ async function generateAISummary() {
 
 จุดที่ต้องเฝ้าระวัง:
 - ท่อความเร็วเกิน 1.5 m/s: ${highVelPipes || 'ไม่มี'}
-- จุดแรงดันต่ำกว่า 0.5 bar: ${lowPressureNodes || 'ไม่มี'}`;
+- จุดแรงดันต่ำกว่า 0.5 bar: ${lowPressureNodes || 'ไม่มี'}
+- จุดแรงดันสูง 7–10 bar (ใกล้ขีด PN10): ${highPressureNodes || 'ไม่มี'}
+- จุด OVERPRESSURE > 10 bar (เกิน PN10!): ${overPressureNodes || 'ไม่มี'}`;
 
   const promptText = `คุณคือวิศวกรประปาอาวุโส โปรดสรุปผลการจำลองโครงข่ายท่อประปาด้านล่างนี้ ให้เป็น บทสรุปสำหรับผู้บริหาร แบบอ่านง่าย ภาษาไทย พร้อม Markdown และ Emoji
 คำสั่ง: วิเคราะห์ข้อมูล หากพบปัญหาให้เตือน หากดีให้ชื่นชม และให้คำแนะนำ 1-2 ข้อ
@@ -3161,6 +3328,9 @@ function openAdvisor() {
   nodes.forEach(n => {
     if (['reservoir','tank'].includes(n.type)) return;
     const p_bar = (n.p || 0) / 10.197;
+    const p_mwc = n.p || 0;
+
+    // ─ แรงดันต่ำ (< 0.5 bar) ─────────────────────────────────────────────
     if (p_bar < 0.5) {
       issueCount++;
       html += `<div class="advisor-card ${p_bar <= 0 ? 'crit' : ''}">
@@ -3168,8 +3338,47 @@ function openAdvisor() {
           <span class="adv-title"><i class="fas fa-tachometer-alt"></i> แรงดันตก: ${TYPE_NAMES[n.type]||n.type}</span>
           <span class="badge ${p_bar <= 0 ? 'badge-no-p' : 'badge-low-p'}">${p_bar.toFixed(2)} bar</span>
         </div>
-        <div class="adv-desc">แรงดันต่ำกว่ามาตรฐาน 0.5 bar
-          <br><strong style="color:#059669;">💡 คำแนะนำ:</strong> ขยายท่อ Upstream หรือเพิ่มระดับแหล่งจ่าย</div>
+        <div class="adv-desc">แรงดันต่ำกว่ามาตรฐานบริการขั้นต่ำ <b>0.5 bar</b> (WHO/ISO 10508)
+          <br><strong style="color:#059669;">💡 แนวทาง:</strong> ขยายท่อ Upstream, เพิ่มระดับแหล่งจ่าย หรือติดตั้งปั๊ม Booster</div>
+        <div class="adv-actions">
+          <button class="btn-adv btn-adv-locate" onclick="locateElement('node','${n.id}')"><i class="fas fa-crosshairs"></i> ชี้เป้า</button>
+        </div>
+      </div>`;
+    }
+
+    // ─ แรงดันสูง (7–10 bar) ใกล้ขีด PN10 ────────────────────────────────
+    if (p_bar > 7.0 && p_bar <= 10.0) {
+      issueCount++;
+      html += `<div class="advisor-card">
+        <div class="adv-hdr">
+          <span class="adv-title" style="color:#ea580c;"><i class="fas fa-exclamation-triangle"></i> แรงดันสูง: ${TYPE_NAMES[n.type]||n.type}</span>
+          <span class="badge badge-fast">${p_bar.toFixed(2)} bar</span>
+        </div>
+        <div class="adv-desc">แรงดัน <b>${p_bar.toFixed(2)} bar (${p_mwc.toFixed(1)} mWC)</b> ใกล้ขีดสูงสุดท่อ PN10
+          <br>ช่วงปลอดภัยระบบประปา: <b>2–7 bar</b>
+          <br><strong style="color:#059669;">💡 แนวทาง:</strong> ติดตั้ง PRV ที่ upstream และปรับ Setting ≤ 6 bar หรือแบ่ง Pressure Zone</div>
+        <div class="adv-actions">
+          <button class="btn-adv btn-adv-locate" onclick="locateElement('node','${n.id}')"><i class="fas fa-crosshairs"></i> ชี้เป้า</button>
+        </div>
+      </div>`;
+    }
+
+    // ─ OVERPRESSURE (> 10 bar) เกิน PN10 ──────────────────────────────────
+    if (p_bar > 10.0) {
+      issueCount++;
+      html += `<div class="advisor-card crit">
+        <div class="adv-hdr">
+          <span class="adv-title" style="color:#9333ea;"><i class="fas fa-bomb"></i> 🔴 OVERPRESSURE: ${TYPE_NAMES[n.type]||n.type}</span>
+          <span class="badge badge-crit">${p_bar.toFixed(2)} bar</span>
+        </div>
+        <div class="adv-desc" style="color:#7c2d12;">
+          <b>เกินขีดสูงสุดท่อ PN10 (10 bar = 102 mWC) — ท่อ PE100/PVC-U อาจแตกได้!</b>
+          <br>แรงดัน <b>${p_bar.toFixed(2)} bar = ${p_mwc.toFixed(1)} mWC</b>
+          <br><b>สาเหตุที่พบบ่อย:</b>
+          <br>① Reservoir el + waterLevel สูงเกิน 102m เหนือโหนดนี้
+          <br>② Pump head ตั้งค่าสูงเกินความเป็นจริง
+          <br>③ ขาด PRV ในโซนที่มีความต่างระดับมาก
+          <br><strong style="color:#dc2626;">⚠ ต้องแก้ไขทันที:</strong> ติดตั้ง PRV, ลด Reservoir WL, หรือแบ่ง Pressure Zone</div>
         <div class="adv-actions">
           <button class="btn-adv btn-adv-locate" onclick="locateElement('node','${n.id}')"><i class="fas fa-crosshairs"></i> ชี้เป้า</button>
         </div>
