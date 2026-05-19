@@ -1462,6 +1462,7 @@ function _solveHydraulics(hourOfDay) {
         bfsQ2.push({ id: neighborId, srcHead, dist: dist + 1 });
       }
     }
+    // First pass: set all junction heads from BFS-weighted average
     nodes.forEach(n => {
       if (SOURCE_TYPES.has(n.type)) return;
       if (!reachable.has(n.id)) {
@@ -1471,17 +1472,38 @@ function _solveHydraulics(hourOfDay) {
       }
       const entry = headInit.get(n.id);
       if (entry && entry.cnt > 0) {
-        // Weighted average of source heads, decayed by hop distance
-        // Apply elevation correction (node head must be ≥ el)
-        // Initial head estimate — slightly below source head to give NR room to work
-        // Do NOT hard-floor at el here; NR will find equilibrium including negative pressure
+        // BFS distance-weighted average of source heads
+        // No floor — let NR find true equilibrium (negative pressure physically valid)
         n.head = entry.sum / entry.cnt;
       } else {
-        // Fallback: use average source head
         let avgSrcH = 0;
         sources.forEach(s => { avgSrcH += s.head; });
         avgSrcH /= Math.max(sources.length, 1);
-        n.head = Math.max(n.el, avgSrcH * 0.9);
+        n.head = avgSrcH * 0.9;
+      }
+    });
+
+    // Second pass: pre-initialize PRV nodes to their H_set estimate
+    // so downstream nodes start with a better initial head.
+    // This significantly reduces iterations needed for PRV-containing networks.
+    nodes.forEach(n => {
+      if (n.type !== 'prv' || !reachable.has(n.id)) return;
+      const P_set = (n.prvSchedule && n.prvSchedule[h] != null && !isNaN(parseFloat(n.prvSchedule[h])))
+        ? parseFloat(n.prvSchedule[h])
+        : (isNaN(parseFloat(n.setting)) ? 15.0 : parseFloat(n.setting));
+      const H_set_init = n.el + Math.max(0, P_set);
+      // Estimate upstream head from BFS result
+      let H_up_est = -Infinity;
+      const _adjPRV = adjacency.get(n.id);
+      if (_adjPRV) {
+        for (const { neighborId } of _adjPRV) {
+          const nb = nodeMap.get(neighborId);
+          if (nb && reachable.has(neighborId) && nb.head > H_up_est) H_up_est = nb.head;
+        }
+      }
+      // If upstream head > H_set → PRV likely ACTIVE → initialize at H_set
+      if (H_up_est > H_set_init + 0.1) {
+        n.head = H_set_init;
       }
     });
   }
@@ -1516,78 +1538,154 @@ function _solveHydraulics(hourOfDay) {
   let iters = 0, maxRes = 0, converged = false;
   let prevMaxRes = Infinity;
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // PRV SOLVER — EPANET Global Gradient Algorithm implementation
   //
-  // prvInlet = user-specified upstream node ID (or null = auto-detect max-head neighbor)
-  // prvDirection = 'AB' means link.s→link.e direction is upstream→PRV→downstream
+  // PRV is modeled as a HEAD-CONSTRAINED LINK (not a regular pipe):
+  //
+  // State machine (per EPANET Technical Reference):
+  //   ACTIVE : H_upstream > H_set  → downstream head locked at H_set
+  //   OPEN   : H_upstream ≤ H_set  → valve fully open, no pressure control
+  //   CLOSED : reverse flow detected → valve body blocks flow
+  //
+  // Key equations:
+  //   H_set = z_prv + P_set           [absolute hydraulic grade, m MSL]
+  //   P_set = user setting             [m WC = m H₂O]
+  //   h_L   = H_upstream - H_set      [headloss across active PRV, m]
+  //
+  // The PRV node represents the DOWNSTREAM control point.
+  // When ACTIVE: PRV node is a fixed-head pseudo-source at H_set.
+  // When OPEN:   PRV node is a pass-through junction (zero net demand).
+  // When CLOSED: all adjacent links carry zero flow.
+  //
+  // upstreamNodeId tracking:
+  //   If user set prvInlet explicitly → use that node as upstream.
+  //   Otherwise → use the neighbor with the highest current head.
+  //   Once determined in iteration 1, lock it for stability (prevent oscillation).
+  // ──────────────────────────────────────────────────────────────────────────
 
-  // Pre-compute PRV states ONCE before main loop (updated each iteration)
-  // Map: prvNodeId → { state, H_set, upstreamNodeId }
+  // Map: prvNodeId → { state:'ACTIVE'|'OPEN'|'CLOSED', H_set, H_prv, upstreamNodeId }
   const prvStates = new Map();
+  // Lock upstream assignment after first determination to prevent oscillation
+  const prvUpstreamLocked = new Map(); // prvNodeId → upstreamNodeId (locked after iter 0)
 
-  function updatePRVStates() {
+  /**
+   * Update PRV operating states for all PRV nodes.
+   * Called once before the NR loop and once per iteration after head updates.
+   *
+   * @param {number} iterNum  Current NR iteration (0 = pre-loop initialization)
+   */
+  function updatePRVStates(iterNum) {
     for (const n of nodes) {
       if (n.type !== 'prv') continue;
       if (!reachable.has(n.id)) continue;
 
-      // PRV setting = desired downstream pressure [m WC]
-      // H_set = absolute head at PRV outlet [m MSL] = el + setting
-      const prvSetting = (n.prvSchedule && n.prvSchedule[h] !== undefined && n.prvSchedule[h] !== null)
+      // ── 1. Compute H_set ────────────────────────────────────────────────────
+      // P_set = desired downstream gauge pressure [m WC]
+      // H_set = absolute hydraulic grade at PRV outlet [m MSL]
+      //       = PRV node elevation + P_set
+      const P_set = (n.prvSchedule && n.prvSchedule[h] != null && !isNaN(parseFloat(n.prvSchedule[h])))
         ? parseFloat(n.prvSchedule[h])
-        : parseFloat(n.setting) || 15.0;
-      const H_set = n.el + Math.max(0, prvSetting);
+        : (isNaN(parseFloat(n.setting)) ? 15.0 : parseFloat(n.setting));
+      const H_set = n.el + Math.max(0, P_set);  // never below node elevation
 
-      // Determine upstream node
-      let H_upstream = -Infinity;
-      let upstreamNodeId = null;
+      // ── 2. Determine upstream node (stable across iterations) ───────────────
       const _adj = adjacency.get(n.id);
+      let upstreamNodeId = null;
 
       if (n.prvInlet && nodeMap.has(n.prvInlet) && reachable.has(n.prvInlet)) {
+        // User explicitly specified inlet side — always use this
         upstreamNodeId = n.prvInlet;
-        H_upstream = nodeMap.get(n.prvInlet).head;
-      } else if (_adj) {
-        for (const { neighborId } of _adj) {
-          if (!reachable.has(neighborId)) continue;
-          const nb = nodeMap.get(neighborId);
-          if (nb && nb.head > H_upstream) { H_upstream = nb.head; upstreamNodeId = neighborId; }
+      } else if (prvUpstreamLocked.has(n.id)) {
+        // Already determined in a previous iteration — keep stable
+        upstreamNodeId = prvUpstreamLocked.get(n.id);
+        // Validate it still exists and is reachable
+        if (!nodeMap.has(upstreamNodeId) || !reachable.has(upstreamNodeId)) {
+          upstreamNodeId = null;
+          prvUpstreamLocked.delete(n.id);
         }
       }
 
-      let state, H_prv;
-
-      if (upstreamNodeId === null || H_upstream === -Infinity) {
-        // Isolated PRV
-        state = 'OPEN'; H_prv = n.el;
-      } else if (H_upstream > H_set + 0.001) {
-        // ACTIVE: upstream head exceeds setpoint → clamp downstream to H_set
-        state = 'ACTIVE'; H_prv = H_set;
-      } else {
-        // OPEN: upstream below setpoint → full-open, no pressure control
-        state = 'OPEN'; H_prv = H_upstream;
-      }
-
-      // CLOSED: only possible when ACTIVE — downstream pushes back above H_set
-      if (state === 'ACTIVE' && _adj && upstreamNodeId !== null) {
+      if (!upstreamNodeId && _adj) {
+        // Auto-detect: upstream = reachable neighbor with highest hydraulic head
+        // Use a stable selection: if tie, prefer the node that is also a source
+        let maxH = -Infinity;
         for (const { neighborId } of _adj) {
-          if (neighborId === upstreamNodeId) continue;
           if (!reachable.has(neighborId)) continue;
           const nb = nodeMap.get(neighborId);
-          if (nb && nb.head > H_prv + 0.001) {
-            state = 'CLOSED'; H_prv = nb.head; break;
+          if (!nb) continue;
+          const isSource = SOURCE_TYPES.has(nb.type);
+          const score = nb.head + (isSource ? 1000 : 0); // bias toward sources
+          if (score > maxH) { maxH = score; upstreamNodeId = neighborId; }
+        }
+        if (upstreamNodeId) prvUpstreamLocked.set(n.id, upstreamNodeId);
+      }
+
+      // ── 3. Determine upstream head ───────────────────────────────────────────
+      const H_upstream = upstreamNodeId
+        ? (nodeMap.get(upstreamNodeId)?.head ?? -Infinity)
+        : -Infinity;
+
+      // ── 4. State machine ─────────────────────────────────────────────────────
+      //
+      //  ┌─────────────────────────────────────────────────────────┐
+      //  │  H_upstream ≤ H_set  →  OPEN  (valve cannot control)  │
+      //  │  H_upstream > H_set  →  ACTIVE (valve controls P_dn)  │
+      //  │  ACTIVE + reverse flow detected  →  CLOSED             │
+      //  └─────────────────────────────────────────────────────────┘
+      let state, H_prv;
+
+      if (!upstreamNodeId || H_upstream === -Infinity) {
+        // Isolated PRV node — no upstream connection
+        state = 'OPEN';
+        H_prv = n.head;   // keep current head, let NR handle
+      } else if (H_upstream <= H_set + 1e-4) {
+        // OPEN: upstream pressure insufficient to trigger PRV control
+        // PRV is fully open — downstream head determined by network hydraulics
+        // PRV node participates in NR as a regular zero-demand junction
+        state = 'OPEN';
+        H_prv = n.head;   // NR solves this freely
+      } else {
+        // ACTIVE: upstream pressure exceeds setpoint
+        // PRV clamps downstream head to H_set exactly
+        // Downstream network sees PRV as a fixed-head pseudo-source
+        state = 'ACTIVE';
+        H_prv = H_set;
+
+        // CLOSED check: reverse flow condition
+        // If any downstream neighbor has head > H_set → back-pressure → CLOSED
+        if (_adj) {
+          for (const { neighborId } of _adj) {
+            if (neighborId === upstreamNodeId) continue;
+            if (!reachable.has(neighborId)) continue;
+            const nbHead = nodeMap.get(neighborId)?.head ?? -Infinity;
+            if (nbHead > H_set + 1e-4) {
+              // Reverse flow: downstream pushes back above setpoint
+              // PRV body prevents flow reversal → CLOSED
+              state  = 'CLOSED';
+              H_prv  = H_upstream;  // PRV head equalizes with upstream (no flow)
+              break;
+            }
           }
         }
       }
 
-      prvStates.set(n.id, { state, H_prv, H_set, upstreamNodeId });
-      n.prvState = state;
+      // ── 5. Apply head constraint ─────────────────────────────────────────────
+      // ACTIVE/CLOSED: PRV node is a fixed-head boundary — override NR
+      // OPEN:          PRV node participates in NR normally (head not forced)
+      if (state === 'ACTIVE' || state === 'CLOSED') {
+        n.head = H_prv;
+      }
 
-      // ACTIVE/CLOSED → fixed-head boundary node
-      // OPEN → regular junction, NR solves head freely through adjacent pipes
-      if (state === 'ACTIVE' || state === 'CLOSED') n.head = H_prv;
+      prvStates.set(n.id, { state, H_prv, H_set, P_set, upstreamNodeId, H_upstream });
+      n.prvState   = state;
+      n.prvH_set   = H_set;   // expose for display
+      n.prvP_set   = P_set;
     }
   }
 
-  // Initialize PRV states from initial head estimates
-  updatePRVStates();
+  // Initialize PRV states from initial head estimates (iter=0)
+  updatePRVStates(0);
 
   for (let iter = 0; iter < MAX_ITER; iter++) {
     maxRes = 0;
@@ -1734,9 +1832,8 @@ function _solveHydraulics(hourOfDay) {
       }
     }
 
-    // Update PRV states after NR pass (upstream heads now updated)
-    // Upstream heads are now updated → re-compute PRV operating state
-    updatePRVStates();
+    // Update PRV states after NR pass — pass iteration number for stability tracking
+    updatePRVStates(iter + 1);
 
     // ── Pump head update (pump curve iteration) ───────────────────────────
     // Pump is modeled as a FIXED-HEAD SOURCE.
@@ -1782,11 +1879,21 @@ function _solveHydraulics(hourOfDay) {
       p.head = p.head * 0.5 + newHead * 0.5;
     }
 
-    // ── Adaptive SOR damping ──────────────────────────────────────────────
-    if (maxRes > prevMaxRes * 1.5 && omega > 0.3) {
-      omega = Math.max(0.3, omega * 0.8);
-    } else if (maxRes < prevMaxRes * 0.5 && omega < 1.0) {
-      omega = Math.min(1.0, omega * 1.1);
+    // Adaptive SOR relaxation
+    // Detect PRV state changes — they cause residual spikes; damp omega accordingly
+    let prvStateChanged = false;
+    prvStates.forEach((ps, pid) => {
+      const n = nodeMap.get(pid);
+      if (n && n._prevPrvState && n._prevPrvState !== ps.state) prvStateChanged = true;
+      if (n) n._prevPrvState = ps.state;
+    });
+
+    if (prvStateChanged || maxRes > prevMaxRes * 2.0) {
+      omega = Math.max(0.25, omega * 0.7);   // aggressive damp on PRV flip or divergence
+    } else if (maxRes > prevMaxRes * 1.2 && omega > 0.4) {
+      omega = Math.max(0.4, omega * 0.85);
+    } else if (maxRes < prevMaxRes * 0.6 && omega < 1.0) {
+      omega = Math.min(1.0, omega * 1.08);
     }
     prevMaxRes = maxRes;
 
@@ -1805,11 +1912,20 @@ function _solveHydraulics(hourOfDay) {
   updateCVStatus();
   nodes.filter(n => n.type === 'check_valve').forEach(cv => { cv.cvBlocked = false; });
 
-  // p = H - el  (signed; negative = siphon condition, physically valid)
+  // Compute gauge pressure at each node: P = H - z  [m WC]
+  // Physical meaning: pressure head above node elevation
+  // Negative pressure = sub-atmospheric (siphon), physically valid up to ~10m
   nodes.forEach(n => {
     if (!reachable.has(n.id) && !SOURCE_TYPES.has(n.type)) {
       n.p    = 0;
       n.head = n.el;
+      return;
+    }
+    // PRV CLOSED: head was set to H_upstream (to prevent singularity)
+    // Report downstream pressure = 0 (valve is shut, no flow to downstream)
+    const ps = prvStates.get(n.id);
+    if (ps && ps.state === 'CLOSED') {
+      n.p = 0;  // downstream gauge pressure = 0 for closed valve
     } else {
       n.p = n.head - n.el;
     }
@@ -1844,9 +1960,14 @@ function _solveHydraulics(hourOfDay) {
       return;
     }
 
-    // Check if either endpoint is a CLOSED PRV → block flow
-    if ((n1.type === 'prv' && prvStates.get(n1.id)?.state === 'CLOSED') ||
-        (n2.type === 'prv' && prvStates.get(n2.id)?.state === 'CLOSED')) {
+    // PRV state handling in post-solve
+    const prv1 = n1.type === 'prv' ? prvStates.get(n1.id) : null;
+    const prv2 = n2.type === 'prv' ? prvStates.get(n2.id) : null;
+    const prvClosed1 = prv1?.state === 'CLOSED';
+    const prvClosed2 = prv2?.state === 'CLOSED';
+
+    if (prvClosed1 || prvClosed2) {
+      // CLOSED PRV: no flow passes through
       l.flow = 0; l.vel = 0;
       l.hl   = Math.abs((n1.head || 0) - (n2.head || 0));
       l.hf   = l.hl; l.hm = 0; l.re = 0;
@@ -2273,10 +2394,18 @@ function buildNodeTooltip(n) {
     nc += `<b style="color:${vc};">🚰</b> ${pct === 0 ? 'ปิดสนิท' : pct === 100 ? 'เปิดเต็ม' : pct + '% (หรี่)'}<br>`;
   } else if (n.type === 'prv') {
     const _prvH = isEPSComputed ? currentTimeStep : 0;
-    const _prvSetting = (n.prvSchedule && n.prvSchedule[_prvH] !== null && n.prvSchedule[_prvH] !== undefined)
-      ? n.prvSchedule[_prvH] : (n.setting || 15);
-    nc += `<b style="color:#f97316;">PRV Setting:</b> ${parseFloat(_prvSetting).toFixed(1)}m (${(parseFloat(_prvSetting)/10.197).toFixed(2)} bar)<br>`;
-    if (n.prvInlet) nc += `<b style="color:#0891b2;">⬆ Upstream:</b> ${n.prvInlet}<br>`;
+    const _prvSetting = (n.prvSchedule && n.prvSchedule[_prvH] != null && !isNaN(parseFloat(n.prvSchedule[_prvH])))
+      ? parseFloat(n.prvSchedule[_prvH]) : (parseFloat(n.setting) || 15);
+    const _H_set = n.el + _prvSetting;
+    nc += `<b style="color:#f97316;">P_set:</b> ${_prvSetting.toFixed(1)} m WC = ${(_prvSetting/10.197).toFixed(2)} bar<br>`;
+    nc += `<b style="color:#ea580c;">H_set:</b> ${_H_set.toFixed(2)} m MSL<br>`;
+    if (isCalculated) {
+      const _stateColor = n.prvState==='ACTIVE'?'#ea580c':n.prvState==='OPEN'?'#16a34a':'#b91c1c';
+      nc += `<b style="color:${_stateColor};">State:</b> ${n.prvState||'?'}<br>`;
+      const _P_dn = Math.max(0, (n.head||0) - n.el);
+      nc += `<b style="color:#9333ea;">P_dn:</b> ${_P_dn.toFixed(2)} m WC (${(_P_dn/10.197).toFixed(2)} bar)<br>`;
+    }
+    if (n.prvInlet) nc += `<b style="color:#0891b2;">⬆ Inlet:</b> ${n.prvInlet}<br>`;
   } else if (n.type === 'tank') {
     const _tkHead = n.el + (n.waterLevel || 0);
     nc += `<b style="color:#8b5cf6;">💧 Level:</b> ${(n.waterLevel || 0).toFixed(2)}m<br>`;
@@ -2709,21 +2838,50 @@ function openProp(id, type) {
       // PRV result box (if calculated)
       let prvResultHtml = '';
       if (isCalculated) {
-        const state = el.prvState || 'UNKNOWN';
-        const stateColor = state === 'ACTIVE' ? '#ea580c' : state === 'OPEN' ? '#16a34a' : state === 'CLOSED' ? '#b91c1c' : '#64748b';
-        const stateIcon  = state === 'ACTIVE' ? '⬇️ กำลังลดแรงดัน' : state === 'OPEN' ? '✅ เปิดเต็มที่ (pass-through)' : state === 'CLOSED' ? '⛔ บล็อกย้อน (reverse blocked)' : 'ไม่ทราบ';
-        const H_prv = el.head ?? 0;
-        const upNode = el.prvInlet ? nodeMap.get(el.prvInlet) : null;
-        const H_up   = upNode ? (upNode.head??0) : 0;
-        const H_loss = state === 'ACTIVE' ? Math.max(0, H_up - H_prv) : 0;
+        const state      = el.prvState || 'UNKNOWN';
+        const P_set_disp = el.prvP_set ?? el.setting ?? 15;
+        const H_set_disp = el.prvH_set ?? (el.el + P_set_disp);
+        const H_dn       = el.head ?? 0;            // downstream head (PRV node)
+        const P_dn_mwc   = Math.max(0, H_dn - el.el);  // downstream pressure [m WC]
+        const P_dn_bar   = P_dn_mwc / 10.197;
+
+        // Find upstream head from saved prvStates or prvInlet
+        let H_up = 0, P_up_mwc = 0;
+        if (el.prvInlet && nodeMap.has(el.prvInlet)) {
+          const upN = nodeMap.get(el.prvInlet);
+          H_up = upN.head ?? 0;
+          P_up_mwc = Math.max(0, H_up - (upN.el ?? 0));
+        } else {
+          // Auto-detect upstream from adjacency (highest head neighbor)
+          const _a = adjacency.get(el.id);
+          if (_a) {
+            for (const { neighborId } of _a) {
+              const nb = nodeMap.get(neighborId);
+              if (nb && (nb.head ?? 0) > H_up) { H_up = nb.head; P_up_mwc = Math.max(0, H_up - nb.el); }
+            }
+          }
+        }
+
+        const h_loss     = Math.max(0, H_up - H_dn);   // headloss across PRV [m]
+        const stateColor = state==='ACTIVE'?'#ea580c':state==='OPEN'?'#16a34a':state==='CLOSED'?'#b91c1c':'#64748b';
+        const stateIcon  = state==='ACTIVE'?'⬇️ ควบคุมแรงดัน (ACTIVE)':state==='OPEN'?'✅ เปิดเต็มที่ (OPEN)':state==='CLOSED'?'⛔ ปิดกั้นย้อน (CLOSED)':'—';
+        const verifyOk   = state==='ACTIVE' ? Math.abs(H_dn - H_set_disp) < 0.05 : true;
+
         prvResultHtml = `<div style="background:${state==='ACTIVE'?'#fff7ed':state==='OPEN'?'#f0fdf4':'#fef2f2'};border-radius:10px;border:1.5px solid ${stateColor};padding:10px;">
-          <div style="font-size:10px;font-weight:800;color:${stateColor};margin-bottom:6px;">สถานะ PRV: ${stateIcon}</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:9px;font-family:var(--mono);">
-            <div style="color:#64748b;">H Upstream:</div><div style="font-weight:800;color:#0f172a;">${H_up.toFixed(3)} m</div>
-            <div style="color:#64748b;">H Downstream (PRV):</div><div style="font-weight:800;color:${stateColor};">${H_prv.toFixed(3)} m</div>
-            <div style="color:#64748b;">PRV Headloss:</div><div style="font-weight:800;color:#ef4444;">${H_loss.toFixed(3)} m</div>
-            <div style="color:#64748b;">Setting:</div><div style="font-weight:800;color:#f97316;">${(el.setting||15).toFixed(1)} m (${((el.setting||15)/10.197).toFixed(2)} bar)</div>
+          <div style="font-size:10px;font-weight:800;color:${stateColor};margin-bottom:8px;">${stateIcon}</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;font-size:9px;font-family:var(--mono);">
+            <div style="color:#64748b;">⬆ H upstream:</div>
+            <div style="font-weight:800;color:#1d4ed8;">${H_up.toFixed(3)} m &nbsp;(${(P_up_mwc/10.197).toFixed(3)} bar)</div>
+            <div style="color:#64748b;">⬇ H downstream:</div>
+            <div style="font-weight:800;color:${stateColor};">${H_dn.toFixed(3)} m &nbsp;(${P_dn_bar.toFixed(3)} bar)</div>
+            <div style="color:#64748b;">📉 PRV Headloss:</div>
+            <div style="font-weight:800;color:#ef4444;">${h_loss.toFixed(3)} m</div>
+            <div style="color:#64748b;">🎯 H_set (P_set):</div>
+            <div style="font-weight:800;color:#f97316;">${H_set_disp.toFixed(3)} m &nbsp;(${P_set_disp.toFixed(1)} m WC)</div>
+            <div style="color:#64748b;">✔ ตรงค่าตั้ง:</div>
+            <div style="font-weight:800;color:${verifyOk?'#16a34a':'#dc2626'};">${state==='ACTIVE'?(verifyOk?'✓ ใช่':'✗ ผิด'):'—'}</div>
           </div>
+          ${state==='ACTIVE'&&!verifyOk?'<div style="margin-top:6px;font-size:8.5px;color:#dc2626;font-family:var(--sans);">⚠ H downstream ยังไม่ตรง H_set — ลองเพิ่ม Iteration หรือตรวจสอบ Loop Network</div>':''}
         </div>`;
       }
 
