@@ -183,7 +183,7 @@
     <button class="ctx-menu-item" style="color:#2563eb;" onclick="openPipeProps()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>แก้ไขข้อมูลท่อ</button>
     <div style="height:1px;background:#f1f5f9;margin:4px 0;"></div>
     <button class="ctx-menu-item" onclick="insertAcc('valve')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><line x1="6" y1="6" x2="6" y2="18" stroke="#22c55e" stroke-width="3" stroke-linecap="round"/><line x1="18" y1="6" x2="18" y2="18" stroke="#22c55e" stroke-width="3" stroke-linecap="round"/><circle cx="12" cy="12" r="5" fill="white" stroke="#22c55e" stroke-width="2"/></svg>ประตูน้ำ (Gate Valve)</button>
-    <button class="ctx-menu-item" onclick="insertAcc('prv')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="1" y="9" width="8" height="6" rx="2" fill="#f97316"/><rect x="15" y="9" width="8" height="6" rx="2" fill="#f97316"/><circle cx="12" cy="12" r="4" fill="#fff7ed" stroke="#f97316" stroke-width="1.5"/><text x="12" y="15.5" text-anchor="middle" font-size="6" font-weight="900" fill="#f97316">P</text></svg>PRV (ลดแรงดัน)</button>
+    <button class="ctx-menu-item" onclick="insertAcc('prv')"><svg width="22" height="14" viewBox="0 0 64 36"><rect x="0" y="14" width="14" height="8" rx="3" fill="#f97316"/><rect x="50" y="14" width="14" height="8" rx="3" fill="#f97316"/><rect x="13" y="6" width="38" height="24" rx="6" fill="#fff7ed" stroke="#f97316" stroke-width="2.5"/><text x="32" y="23" text-anchor="middle" font-size="10" font-weight="900" fill="#f97316" font-family="monospace">PRV</text><line x1="16" y1="18" x2="42" y2="18" stroke="#f97316" stroke-width="2" stroke-linecap="round"/><polygon points="42,13 50,18 42,23" fill="#f97316"/><circle cx="16" cy="18" r="3" fill="#f97316"/></svg>PRV (ลดแรงดัน)</button>
     <button class="ctx-menu-item" style="color:#0d9488;" onclick="insertAcc('check_valve')"><svg width="16" height="16" viewBox="0 0 32 22"><rect x="0" y="8" width="8" height="6" rx="1.5" fill="#0d9488"/><rect x="24" y="8" width="8" height="6" rx="1.5" fill="#0d9488"/><rect x="7" y="3" width="18" height="16" rx="3" fill="#ccfbf1" stroke="#0d9488" stroke-width="1.5"/><polygon points="15,6 23,11 15,16" fill="#0d9488"/></svg>เช็ควาล์ว (Check Valve)</button>
   </div>
 
@@ -475,7 +475,52 @@ const SVG = {
   valve_open:`<svg width="30" height="30" viewBox="0 0 24 24" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,0.25))"><line x1="6" y1="6" x2="6" y2="18" stroke="#22c55e" stroke-width="3" stroke-linecap="round"/><line x1="18" y1="6" x2="18" y2="18" stroke="#22c55e" stroke-width="3" stroke-linecap="round"/><circle cx="12" cy="12" r="5" fill="white" stroke="#22c55e" stroke-width="3"/></svg>`,
   valve_partial:`<svg width="30" height="30" viewBox="0 0 24 24" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,0.25))"><line x1="6" y1="6" x2="6" y2="18" stroke="#f59e0b" stroke-width="3" stroke-linecap="round"/><line x1="18" y1="6" x2="18" y2="18" stroke="#f59e0b" stroke-width="3" stroke-linecap="round"/><circle cx="12" cy="12" r="5" fill="white" stroke="#f59e0b" stroke-width="3"/></svg>`,
   valve_closed:`<svg width="30" height="30" viewBox="0 0 24 24" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,0.25))"><line x1="6" y1="6" x2="6" y2="18" stroke="#ef4444" stroke-width="3" stroke-linecap="round"/><line x1="18" y1="6" x2="18" y2="18" stroke="#ef4444" stroke-width="3" stroke-linecap="round"/><circle cx="12" cy="12" r="5" fill="white" stroke="#ef4444" stroke-width="3"/></svg>`,
-  prv:`<svg width="32" height="32" viewBox="0 0 24 24" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,0.25))"><rect x="1" y="9" width="9" height="6" rx="2" fill="#f97316"/><rect x="14" y="9" width="9" height="6" rx="2" fill="#f97316"/><circle cx="12" cy="12" r="5" fill="#fff7ed" stroke="#f97316" stroke-width="2"/><text x="12" y="16" text-anchor="middle" font-size="7" font-weight="900" fill="#f97316">P</text><path d="M8 12 L10 10 L10 14Z" fill="#f97316"/><path d="M16 12 L14 10 L14 14Z" fill="#f97316"/></svg>`,
+  /**
+   * PRV icon — direction-aware, state-colored, large enough to read on map.
+   * @param {number}  angleDeg   rotation so arrow points from inlet→outlet (degrees)
+   * @param {string}  state      'ACTIVE' | 'OPEN' | 'CLOSED' | 'UNKNOWN'
+   * @param {boolean} hasInlet   true = inlet is explicitly set (show directional arrow)
+   */
+  prv: (angleDeg=0, state='UNKNOWN', hasInlet=false) => {
+    // Color scheme per state
+    const bodyCol  = state==='ACTIVE'  ? '#f97316'
+                   : state==='OPEN'    ? '#22c55e'
+                   : state==='CLOSED'  ? '#ef4444'
+                   :                    '#f97316'; // UNKNOWN / pre-calc
+    const fillCol  = state==='ACTIVE'  ? '#fff7ed'
+                   : state==='OPEN'    ? '#f0fdf4'
+                   : state==='CLOSED'  ? '#fef2f2'
+                   :                    '#fff7ed';
+    const arrowCol = state==='CLOSED'  ? '#b91c1c' : bodyCol;
+    // The directional arrow always shown; greyed-out when no inlet set
+    const arrowOpacity = hasInlet ? '1' : '0.35';
+    return `<svg width="64" height="36" viewBox="0 0 64 36"
+        style="filter:drop-shadow(0 2px 6px rgba(0,0,0,0.32));overflow:visible;"
+        transform-origin="32 18">
+      <g transform="rotate(${angleDeg},32,18)">
+        <!-- Left pipe stub (inlet side) -->
+        <rect x="0" y="14" width="14" height="8" rx="3" fill="${bodyCol}"/>
+        <!-- Right pipe stub (outlet side) -->
+        <rect x="50" y="14" width="14" height="8" rx="3" fill="${bodyCol}"/>
+        <!-- Valve body -->
+        <rect x="13" y="6" width="38" height="24" rx="6" fill="${fillCol}" stroke="${bodyCol}" stroke-width="2.5"/>
+        <!-- PRV label -->
+        <text x="32" y="17" text-anchor="middle" font-size="7.5" font-weight="900" fill="${bodyCol}" font-family="'JetBrains Mono',monospace">PRV</text>
+        <!-- Direction arrow group (inlet → outlet = left → right) -->
+        <g opacity="${arrowOpacity}">
+          <!-- Arrow shaft -->
+          <line x1="16" y1="18" x2="44" y2="18" stroke="${arrowCol}" stroke-width="2.5" stroke-linecap="round"/>
+          <!-- Arrowhead -->
+          <polygon points="44,13 52,18 44,23" fill="${arrowCol}"/>
+          <!-- Inlet dot -->
+          <circle cx="16" cy="18" r="3.5" fill="${arrowCol}"/>
+        </g>
+        ${state==='CLOSED' ? `<!-- Cross for closed state -->
+        <line x1="22" y1="10" x2="42" y2="26" stroke="#ef4444" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>
+        <line x1="42" y1="10" x2="22" y2="26" stroke="#ef4444" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>` : ''}
+      </g>
+    </svg>`;
+  },
   check_valve: (angleDeg=0, blocked=false) => {
     const blockedClass = blocked ? 'cv-blocked' : '';
     const arrowAni = !blocked ? 'cv-arrow-ani' : '';
@@ -503,7 +548,7 @@ const TYPE_ICONS = {
   reservoir:`<svg width="20" height="20" viewBox="0 0 26 26"><rect x="2" y="12" width="22" height="12" rx="2" fill="#0891b2"/><rect x="1" y="8" width="24" height="5" rx="1" fill="#0c4a6e"/></svg>`,
   pump:`<svg width="20" height="20" viewBox="0 0 26 26"><circle cx="13" cy="13" r="9" fill="#22c55e"/><path d="M13 13 L13 6 Q17 9 13 13Z" fill="white" opacity="0.9"/></svg>`,
   valve:`<svg width="20" height="20" viewBox="0 0 24 24"><line x1="6" y1="6" x2="6" y2="18" stroke="#22c55e" stroke-width="3" stroke-linecap="round"/><line x1="18" y1="6" x2="18" y2="18" stroke="#22c55e" stroke-width="3" stroke-linecap="round"/><circle cx="12" cy="12" r="5" fill="white" stroke="#22c55e" stroke-width="2"/></svg>`,
-  prv:`<svg width="20" height="20" viewBox="0 0 24 24"><rect x="1" y="9" width="9" height="6" rx="2" fill="#f97316"/><rect x="14" y="9" width="9" height="6" rx="2" fill="#f97316"/><circle cx="12" cy="12" r="5" fill="#fff7ed" stroke="#f97316" stroke-width="2"/><text x="12" y="16" text-anchor="middle" font-size="7" font-weight="900" fill="#f97316">P</text></svg>`,
+  prv:`<svg width="28" height="20" viewBox="0 0 64 36"><rect x="0" y="14" width="14" height="8" rx="3" fill="#f97316"/><rect x="50" y="14" width="14" height="8" rx="3" fill="#f97316"/><rect x="13" y="6" width="38" height="24" rx="6" fill="#fff7ed" stroke="#f97316" stroke-width="2.5"/><text x="32" y="23" text-anchor="middle" font-size="9" font-weight="900" fill="#f97316" font-family="monospace">PRV</text><line x1="16" y1="18" x2="44" y2="18" stroke="#f97316" stroke-width="2" stroke-linecap="round"/><polygon points="44,13 52,18 44,23" fill="#f97316"/><circle cx="16" cy="18" r="3" fill="#f97316"/></svg>`,
   check_valve:`<svg width="26" height="18" viewBox="0 0 44 30"><rect x="0" y="12" width="10" height="6" rx="2" fill="#0d9488"/><rect x="34" y="12" width="10" height="6" rx="2" fill="#0d9488"/><rect x="9" y="5" width="26" height="20" rx="4" fill="#ccfbf1" stroke="#0d9488" stroke-width="2"/><polygon points="20,8 33,15 20,22" fill="#0d9488"/></svg>`,
   pipe:`<i class="fas fa-minus" style="color:#64748b;font-size:16px;"></i>`
 };
@@ -2132,6 +2177,75 @@ function computeCheckValveAngles() {
   });
 }
 
+/**
+ * Compute PRV flow direction angles for map icon rendering.
+ * Angle = direction from inlet node → PRV → outlet node (screen-space).
+ * If prvInlet is set explicitly, use that; otherwise use auto-detected highest-head neighbor.
+ * Stores: prv.prvFlowAngle (degrees), prv.prvFlowState (ACTIVE/OPEN/CLOSED/UNKNOWN)
+ */
+function computePRVAngles() {
+  nodes.filter(n => n.type === 'prv').forEach(prv => {
+    // State from last solve
+    prv.prvFlowState = prv.prvState || (isCalculated ? 'OPEN' : 'UNKNOWN');
+
+    // Find inlet and outlet nodes
+    const adjLinks = links.filter(l => l.s === prv.id || l.e === prv.id);
+    if (adjLinks.length < 2) {
+      prv.prvFlowAngle = 0;
+      return;
+    }
+
+    let inletNode = null;
+    let outletNode = null;
+
+    if (prv.prvInlet && nodeMap.has(prv.prvInlet)) {
+      // Explicit user-set direction
+      inletNode = nodeMap.get(prv.prvInlet);
+      // Outlet = any other connected node (first one that is not inlet)
+      for (const l of adjLinks) {
+        const otherId = l.s === prv.id ? l.e : l.s;
+        if (otherId !== prv.prvInlet) {
+          outletNode = nodeMap.get(otherId);
+          break;
+        }
+      }
+    } else {
+      // Auto: inlet = neighbor with highest head (or first neighbor pre-calc)
+      let maxHead = -Infinity;
+      for (const l of adjLinks) {
+        const otherId = l.s === prv.id ? l.e : l.s;
+        const nb = nodeMap.get(otherId);
+        if (!nb) continue;
+        const h = nb.head ?? nb.el ?? 0;
+        if (h > maxHead) { maxHead = h; inletNode = nb; }
+      }
+      for (const l of adjLinks) {
+        const otherId = l.s === prv.id ? l.e : l.s;
+        const nb = nodeMap.get(otherId);
+        if (nb && nb !== inletNode) { outletNode = nb; break; }
+      }
+    }
+
+    if (!inletNode || !outletNode) {
+      prv.prvFlowAngle = 0;
+      return;
+    }
+
+    // Convert lat/lng to screen pixel direction for angle
+    try {
+      const ptIn  = map.latLngToLayerPoint([inletNode.lat,  inletNode.lng]);
+      const ptOut = map.latLngToLayerPoint([outletNode.lat, outletNode.lng]);
+      prv.prvFlowAngle = Math.atan2(ptOut.y - ptIn.y, ptOut.x - ptIn.x) * 180 / Math.PI;
+    } catch(e) {
+      // Fallback: use lat/lng difference
+      prv.prvFlowAngle = Math.atan2(
+        -(outletNode.lat - inletNode.lat),
+          outletNode.lng - inletNode.lng
+      ) * 180 / Math.PI;
+    }
+  });
+}
+
 function pipeColor(l) {
   if (!isCalculated) {
     // ก่อนคำนวณ: แสดงสีตามขนาดเส้นผ่านศูนย์กลางท่อ
@@ -2207,7 +2321,12 @@ function getNodeIcon(n) {
       (n.pumpSchedule ? (n.pumpSchedule[currentTimeStep] !== 0) : true);
     return `<div class="node-svg-wrap">${SVG.pump(_pumpOn)}</div>`;
   }
-  if (n.type === 'prv')         return `<div class="node-svg-wrap">${SVG.prv}</div>`;
+  if (n.type === 'prv') {
+    const _angle  = n.prvFlowAngle  ?? 0;
+    const _state  = n.prvFlowState  ?? (isCalculated ? 'OPEN' : 'UNKNOWN');
+    const _hasInlet = !!(n.prvInlet);
+    return `<div class="node-svg-wrap" style="overflow:visible;">${SVG.prv(_angle, _state, _hasInlet)}</div>`;
+  }
 
   if (n.type === 'check_valve') return `<div class="node-svg-wrap" style="overflow:visible;">${SVG.check_valve(n.cvFlowAngle || 0, n.cvBlocked || false)}</div>`;
   if (n.type === 'valve') {
@@ -2309,6 +2428,7 @@ function _updateNodeTooltip(nodeId) {
 function render() {
   if (!map) return;
   computeCheckValveAngles();
+  computePRVAngles();
 
   // Clear all flow arrows (recreated each render after calculation)
   mapItems.arrows.forEach(a => map.removeLayer(a));
@@ -2383,7 +2503,7 @@ function render() {
     const isSz = n.type==='tank'?[40,44]:n.type==='reservoir'?[40,36]:n.type==='pump'?[40,40]:
                  n.type==='check_valve'?[46,32]:
                  n.type==='junction'?(()=>{const _z=map?map.getZoom():0;return _z>=15?[28,30]:[22,22];})():
-                 n.type==='valve'?[22,22]:n.type==='prv'?[22,22]:[22,22];
+                 n.type==='valve'?[22,22]:n.type==='prv'?[68,38]:[22,22];
     const iconObj = L.divIcon({ className:'', html:iconHtml, iconSize:isSz, iconAnchor:[isSz[0]/2, isSz[1]/2] });
     const nc = buildNodeTooltip(n);
 
@@ -2589,59 +2709,98 @@ function openProp(id, type) {
           const _nb = nodeMap.get(neighborId);
           if (_nb) {
             const _isUpstream = el.prvInlet === neighborId;
-            const _headStr = isCalculated ? ` | H=${(_nb.head||0).toFixed(1)}m` : '';
+            const _headStr = isCalculated ? ` H=${(_nb.head||0).toFixed(1)}m` : ` el=${_nb.el.toFixed(1)}m`;
             _neighbors.push({ id: neighborId, name: TYPE_NAMES[_nb.type]||_nb.type, el: _nb.el, isUpstream: _isUpstream, headStr: _headStr });
           }
         }
       }
 
-      // Build direction control UI: visual buttons for each neighbor
+      // ─── Build direction visual display ─────────────────────────────────
+      // Shows: [INLET NODE] ──▶── [PRV] ──▶── [OUTLET NODE]
       let dirHtml = '';
       if (_neighbors.length === 0) {
-        dirHtml = `<div style="padding:8px;background:#fef2f2;border-radius:8px;font-size:9px;color:#b91c1c;">⚠ PRV ยังไม่ได้เชื่อมต่อกับท่อ — วาดท่อเชื่อม PRV ก่อน</div>`;
+        dirHtml = `<div style="padding:10px;background:#fef2f2;border-radius:10px;font-size:9px;color:#b91c1c;text-align:center;">
+          ⚠ ยังไม่ได้เชื่อมต่อท่อ — วาดท่อเข้า PRV ก่อน</div>`;
       } else if (_neighbors.length === 1) {
-        dirHtml = `<div style="padding:8px;background:#fef9c3;border-radius:8px;font-size:9px;color:#854d0e;">⚠ PRV ต้องเชื่อมต่อกับท่ออย่างน้อย 2 เส้น (ด้าน Upstream และ Downstream)</div>`;
+        dirHtml = `<div style="padding:10px;background:#fef9c3;border-radius:10px;font-size:9px;color:#854d0e;text-align:center;">
+          ⚠ ต้องเชื่อมท่ออย่างน้อย 2 เส้น (ด้าน Upstream + Downstream)</div>`;
       } else {
-        // Show toggle buttons for each neighbor — user selects which is UPSTREAM
-        dirHtml = `<div style="font-size:9px;color:#92400e;margin-bottom:6px;line-height:1.4;">👆 กดเลือก node ที่เป็น <b>ด้านน้ำเข้า (Upstream / แรงดันสูง)</b><br>ด้านที่เหลือจะเป็น Downstream โดยอัตโนมัติ</div>`;
-        // Add Mode A/B quick-swap if exactly 2 neighbors
-        if (_neighbors.length === 2) {
-          const modeAUp = _neighbors[0].id;
-          const modeBUp = _neighbors[1].id;
-          const isModeA = el.prvInlet === modeAUp;
-          const isModeB = el.prvInlet === modeBUp;
-          dirHtml += `<div style="display:flex;gap:6px;margin-bottom:8px;">
-            <button onclick="setPRVInlet('${el.id}','${modeAUp}')"
-              style="flex:1;padding:7px 10px;border-radius:9px;border:2px solid ${isModeA?'#f97316':'#e2e8f0'};background:${isModeA?'#fff7ed':'white'};font-size:9px;font-weight:800;cursor:pointer;font-family:var(--sans);color:${isModeA?'#ea580c':'#64748b'};">
-              ▶ Mode A<br><span style="font-size:8px;font-weight:700;">${_neighbors[0].name} → เข้า</span>
-            </button>
-            <div style="display:flex;align-items:center;font-size:12px;color:#94a3b8;">⇄</div>
-            <button onclick="setPRVInlet('${el.id}','${modeBUp}')"
-              style="flex:1;padding:7px 10px;border-radius:9px;border:2px solid ${isModeB?'#f97316':'#e2e8f0'};background:${isModeB?'#fff7ed':'white'};font-size:9px;font-weight:800;cursor:pointer;font-family:var(--sans);color:${isModeB?'#ea580c':'#64748b'};">
-              ◀ Mode B<br><span style="font-size:8px;font-weight:700;">${_neighbors[1].name} → เข้า</span>
-            </button>
-          </div>`;
+        // Determine inlet and outlet nodes
+        const _inletNb  = _neighbors.find(nb => nb.isUpstream) || null;
+        const _outletNb = _neighbors.find(nb => !nb.isUpstream) || _neighbors[1];
+        const _autoLabel = !el.prvInlet ? ' (อัตโนมัติ)' : '';
+
+        // Visual flow diagram
+        const _inletLabel  = _inletNb
+          ? `${_inletNb.name}<br><span style="font-size:8px;color:#92400e;font-family:var(--mono);">${_inletNb.headStr}</span>`
+          : `<span style="color:#92400e;">Auto${_autoLabel}</span>`;
+        const _outletLabel = _outletNb
+          ? `${_outletNb.name}<br><span style="font-size:8px;color:#0369a1;font-family:var(--mono);">${_outletNb.headStr}</span>`
+          : '—';
+
+        dirHtml = `
+        <div style="background:#fef9ef;border:1.5px solid #fde68a;border-radius:12px;padding:12px;">
+          <!-- Flow direction visual -->
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">
+            <!-- Inlet box -->
+            <div style="flex:1;background:#fff7ed;border:2px solid #f97316;border-radius:8px;padding:6px 8px;text-align:center;font-size:9.5px;font-weight:800;color:#ea580c;font-family:var(--sans);">
+              ⬆ INLET<br>${_inletLabel}
+            </div>
+            <!-- Arrow -->
+            <div style="display:flex;flex-direction:column;align-items:center;gap:2px;flex-shrink:0;">
+              <svg width="36" height="16" viewBox="0 0 36 16">
+                <line x1="0" y1="8" x2="28" y2="8" stroke="#f97316" stroke-width="3" stroke-linecap="round"/>
+                <polygon points="26,3 36,8 26,13" fill="#f97316"/>
+              </svg>
+              <div style="font-size:7.5px;color:#92400e;font-weight:700;font-family:var(--mono);">น้ำไหล</div>
+            </div>
+            <!-- PRV center -->
+            <div style="flex-shrink:0;background:#f97316;border-radius:8px;padding:6px 10px;text-align:center;font-size:9px;font-weight:900;color:white;font-family:var(--mono);">PRV</div>
+            <!-- Arrow -->
+            <div style="display:flex;flex-direction:column;align-items:center;gap:2px;flex-shrink:0;">
+              <svg width="36" height="16" viewBox="0 0 36 16">
+                <line x1="0" y1="8" x2="28" y2="8" stroke="#0284c7" stroke-width="3" stroke-linecap="round"/>
+                <polygon points="26,3 36,8 26,13" fill="#0284c7"/>
+              </svg>
+              <div style="font-size:7.5px;color:#0369a1;font-weight:700;font-family:var(--mono);">น้ำออก</div>
+            </div>
+            <!-- Outlet box -->
+            <div style="flex:1;background:#eff6ff;border:2px solid #3b82f6;border-radius:8px;padding:6px 8px;text-align:center;font-size:9.5px;font-weight:800;color:#1d4ed8;font-family:var(--sans);">
+              ⬇ OUTLET<br>${_outletLabel}
+            </div>
+          </div>
+
+          <!-- Flip button — single tap to swap -->
+          <button onclick="flipPRV('${el.id}')"
+            style="width:100%;padding:10px;border-radius:10px;border:2px solid #f97316;background:linear-gradient(135deg,#fff7ed,#ffedd5);color:#ea580c;font-size:11px;font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;font-family:var(--sans);transition:all 0.15s;box-shadow:0 2px 8px rgba(249,115,22,0.2);"
+            onmouseover="this.style.background='linear-gradient(135deg,#ffedd5,#fed7aa)';this.style.transform='translateY(-1px)'"
+            onmouseout="this.style.background='linear-gradient(135deg,#fff7ed,#ffedd5)';this.style.transform='translateY(0)'">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ea580c" stroke-width="2.5" stroke-linecap="round">
+              <path d="M7 16V4m0 0L3 8m4-4l4 4"/><path d="M17 8v12m0 0l4-4m-4 4l-4-4"/>
+            </svg>
+            ⇄ สลับทิศน้ำ Inlet ↔ Outlet
+          </button>
+          <div style="font-size:8px;color:#92400e;margin-top:6px;text-align:center;font-family:var(--mono);">
+            ${el.prvInlet ? `📌 กำหนดด้วยตนเอง (Inlet = ${el.prvInlet})` : '🔄 ทิศอัตโนมัติ — กด สลับ เพื่อล็อคทิศ'}
+          </div>
+        </div>`;
+
+        // Also show individual node selector buttons below (for 3+ neighbors)
+        if (_neighbors.length > 2) {
+          dirHtml += `<div style="margin-top:8px;font-size:9px;color:#92400e;margin-bottom:4px;font-family:var(--sans);font-weight:700;">🔧 เลือก Upstream Node (กรณีมีหลาย branch):</div>`;
+          dirHtml += `<div style="display:flex;flex-direction:column;gap:4px;">`;
+          _neighbors.forEach(nb => {
+            const isUp = nb.isUpstream;
+            dirHtml += `<button onclick="setPRVInlet('${el.id}','${nb.id}')"
+              style="width:100%;padding:7px 10px;border-radius:8px;border:1.5px solid ${isUp?'#f97316':'#e2e8f0'};
+              background:${isUp?'#fff7ed':'white'};text-align:left;cursor:pointer;display:flex;justify-content:space-between;align-items:center;
+              font-family:var(--sans);font-size:9.5px;transition:all 0.12s;">
+              <span style="font-weight:800;color:${isUp?'#ea580c':'#475569'};">${isUp?'⬆️ UPSTREAM':'◯'} ${nb.name}</span>
+              <span style="font-size:8.5px;color:#94a3b8;font-family:var(--mono);">${nb.headStr}</span>
+            </button>`;
+          });
+          dirHtml += `</div>`;
         }
-        dirHtml += `<div id="prv_dir_btns" style="display:flex;flex-direction:column;gap:6px;">`;
-        _neighbors.forEach(nb => {
-          const isUp = nb.isUpstream;
-          dirHtml += `<button onclick="setPRVInlet('${el.id}','${nb.id}')"
-            style="width:100%;padding:8px 12px;border-radius:10px;border:2px solid ${isUp?'#f97316':'#e2e8f0'};
-            background:${isUp?'#fff7ed':'white'};text-align:left;cursor:pointer;display:flex;justify-content:space-between;align-items:center;
-            font-family:var(--sans);transition:all 0.15s;">
-            <span style="font-size:10px;font-weight:800;color:${isUp?'#ea580c':'#64748b'};">
-              ${isUp?'⬆️ UPSTREAM (น้ำเข้า)':'◯ Downstream'}
-            </span>
-            <span style="font-size:9px;font-weight:700;color:${isUp?'#92400e':'#94a3b8'};font-family:var(--mono);">
-              ${nb.name} el=${nb.el.toFixed(1)}m${nb.headStr}
-            </span>
-          </button>`;
-        });
-        if (!el.prvInlet) {
-          dirHtml += `<div style="font-size:8.5px;color:#64748b;padding:4px 8px;background:#f8fafc;border-radius:6px;">
-            🔄 ตอนนี้: อัตโนมัติ (เลือก node แรงดันสูงสุด)</div>`;
-        }
-        dirHtml += `</div>`;
       }
 
       // PRV result box (if calculated)
@@ -2681,7 +2840,15 @@ function openProp(id, type) {
       }).join('');
 
       h += `<div style="background:#fff7ed;border:1.5px solid #fed7aa;border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:12px;">
-        <div style="font-size:10px;font-weight:800;color:#ea580c;text-transform:uppercase;font-family:var(--sans);">⬇️ PRV — Pressure Reducing Valve</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div style="font-size:10px;font-weight:800;color:#ea580c;text-transform:uppercase;font-family:var(--sans);">⬇️ PRV — Pressure Reducing Valve</div>
+          <button onclick="flipPRV('${el.id}')"
+            style="padding:5px 10px;border-radius:8px;border:2px solid #f97316;background:#fff7ed;color:#ea580c;font-size:9px;font-weight:800;cursor:pointer;display:flex;align-items:center;gap:5px;font-family:var(--sans);"
+            title="สลับทิศน้ำเข้า/ออก">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ea580c" stroke-width="2.5" stroke-linecap="round"><path d="M7 16V4m0 0L3 8m4-4l4 4"/><path d="M17 8v12m0 0l4-4m-4 4l-4-4"/></svg>
+            สลับทิศ
+          </button>
+        </div>
 
         <div style="background:#fef9ef;border:1px solid #fed7aa;border-radius:10px;padding:8px;font-size:9px;color:#78350f;line-height:1.6;font-family:var(--sans);">
           <b>หลักการทำงาน (AWWA / EPANET):</b><br>
@@ -2705,7 +2872,7 @@ function openProp(id, type) {
         </div>
 
         <div>
-          <label style="font-size:10px;font-weight:800;color:#ea580c;text-transform:uppercase;display:block;margin-bottom:8px;font-family:var(--sans);">🔀 กำหนดทิศทางน้ำ (Direction Control)</label>
+          <label style="font-size:10px;font-weight:800;color:#ea580c;text-transform:uppercase;display:block;margin-bottom:8px;font-family:var(--sans);">🔀 ทิศทางน้ำ — กดปุ่ม "สลับทิศ" เพื่อเปลี่ยน</label>
           ${dirHtml}
           <input type="hidden" id="i_prv_inlet" value="${el.prvInlet || ''}">
         </div>
@@ -2952,12 +3119,75 @@ function flipCV(id) {
   links.forEach(l => {
     if (l.s === id || l.e === id) {
       const tmp = l.s; l.s = l.e; l.e = tmp;
-      // Note: we do NOT call _adjRemoveLink here — it would operate on the already-mutated
-      // l.s/l.e values. rebuildIndexes() below will reconstruct adjacency correctly.
     }
   });
   // Rebuild adjacency from scratch after all flips
   rebuildIndexes();
+  const cv = nodeMap.get(id);
+  if (cv) cv.cvBlocked = false;
+  isCalculated  = false;
+  isEPSComputed = false;
+  document.getElementById('epsPanel').classList.remove('show');
+  saveState();
+  render();
+  openProp(id, 'node');
+}
+
+/**
+ * Flip PRV direction — swap inlet ↔ outlet manually.
+ * Finds the two connected neighbor nodes, then swaps prvInlet to the other one.
+ * Does NOT rely on auto-detection — this is a deliberate user action.
+ */
+function flipPRV(prvId) {
+  const prv = nodeMap.get(prvId);
+  if (!prv || prv.type !== 'prv') return;
+
+  // Collect all connected neighbor node IDs
+  const _adj = adjacency.get(prvId);
+  const neighborIds = [];
+  if (_adj) {
+    for (const { neighborId } of _adj) {
+      neighborIds.push(neighborId);
+    }
+  }
+  if (neighborIds.length < 2) {
+    warn('PRV ต้องเชื่อมกับท่ออย่างน้อย 2 เส้นจึงจะสลับทิศได้');
+    return;
+  }
+
+  // Current inlet
+  const currentInlet = prv.prvInlet;
+
+  if (!currentInlet) {
+    // No inlet set yet → auto-detect current inlet (highest head neighbor)
+    // then set it to the OTHER neighbor
+    let maxHead = -Infinity, autoInletId = null;
+    for (const nid of neighborIds) {
+      const nb = nodeMap.get(nid);
+      if (!nb) continue;
+      const h = nb.head ?? nb.el ?? 0;
+      if (h > maxHead) { maxHead = h; autoInletId = nid; }
+    }
+    // Set to the opposite of auto-detected
+    const opposite = neighborIds.find(nid => nid !== autoInletId);
+    prv.prvInlet = opposite || neighborIds[0];
+  } else {
+    // Inlet is explicitly set → find a neighbor that is NOT the current inlet
+    const other = neighborIds.find(nid => nid !== currentInlet);
+    prv.prvInlet = other || currentInlet; // fallback: keep same if only 1 neighbor
+  }
+
+  // Update hidden input if panel is open
+  const inp = document.getElementById('i_prv_inlet');
+  if (inp) inp.value = prv.prvInlet || '';
+
+  isCalculated  = false;
+  isEPSComputed = false;
+  document.getElementById('epsPanel').classList.remove('show');
+  saveState();
+  render();
+  openProp(prvId, 'node');
+}
   const cv = nodeMap.get(id);
   if (cv) cv.cvBlocked = false;
   isCalculated  = false;
