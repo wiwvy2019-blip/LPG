@@ -1095,21 +1095,12 @@ function handlePipe(clickedNodeId) {
 
 // ============================================================
 //  MATH: HAZEN-WILLIAMS & MINOR LOSS
-//  [FIXED v3.0 — Production-Grade Hydraulic Engine]
-//  Bug fixes vs v2.0:
-//  [B1] pipeResistance() ใส่ K ของ valve/CV ทั้งสองปลาย — ทำให้ท่อที่ต่อกับ
-//       valve หลายเส้นบวก K ซ้ำซ้อนกัน → แก้เป็น inline-node model
-//  [B2] PRV logic อยู่ภายใน inner NR loop ทำให้ head กระโดดทุก iteration
-//       → ย้ายออกมาเป็น post-NR correction phase
-//  [B3] initial head guess ใช้ linear fraction 0.5 ทำให้ไม่สอดคล้อง HGL จริง
-//       → ใช้ BFS distance-weighted propagation จาก source
-//  [B4] demand unit ในการ debug balance ผิด (หน่วย m³/h vs m³/s)  — ไม่มีผล
-//       ต่อผลลัพธ์แต่แก้ให้ถูก
-//  [B5] Check valve: ตรวจสอบ head จาก current iteration อาจเป็น stale
-//       → pre-iteration decision + post-iteration re-check
-//  [B6] Minor loss linearization ใช้ Q_ref = A×1.0 แต่สำหรับ valve ที่เกือบ
-//       ปิด Q จริงต่ำมาก → linearization error ใหญ่ → เปลี่ยนเป็น exact KQ²
-//       blended approach
+//  [FIXED v4.0 — Production-Grade Hydraulic Engine]
+//  Bug fixes vs v3.0:
+//  [B1] Minor loss double-counting FIXED: split n's own K across N active pipes
+//  [B2] PRV CLOSED detection: H_prv-based comparison (not H_upstream)
+//  [B3] Post-solve link flow: two-pass iterative minor loss R
+//  [B4] PRV CLOSED links: flow explicitly zeroed in post-solve
 // ============================================================
 
 /**
@@ -1365,25 +1356,22 @@ async function calculate() {
 
 /**
  * ══════════════════════════════════════════════════════════════════
- *  CORE STEADY-STATE HYDRAULIC SOLVER  —  v3.0  (Production Grade)
+ *  CORE STEADY-STATE HYDRAULIC SOLVER  —  v4.0  (Production Grade)
  * ══════════════════════════════════════════════════════════════════
  *
  * Algorithm: Global Gradient Algorithm (GGA) variant —
  *            Newton-Raphson per-node with SOR damping (EPANET-compatible)
  *
- * Key fixes vs v2.0:
- *   [B1] Minor loss: computed per inline node, NOT per pipe endpoint
- *        Prevents N-fold duplication when valve node has N adjacent pipes
- *   [B2] PRV correction moved OUTSIDE inner NR loop to a post-NR phase
- *        Prevents head oscillation caused by PRV constraint fighting NR update
- *   [B3] Initial head: BFS distance-weighted from sources
- *        Gives a much better starting point → fewer iterations, less oscillation
- *   [B4] Check valve: pre-iteration status + post-convergence re-check
- *   [B5] Pump: uses actual NR-computed downstream head instead of self-loop
- *   [B6] PRV direction auto-detection: picks neighbor with HIGHEST head as upstream
- *        (same as real PRV—it senses inlet pressure)
- *   [B7] Convergence criterion: L∞ norm on flow residuals (m³/s), consistent units
- *   [B8] Energy validation: post-solve mass balance check for debug
+ * Key fixes vs v3.0:
+ *   [B1] Minor loss double-counting: valve/CV resistance now split equally
+ *        across N active adjacent pipes instead of added N times → matches EPANET
+ *   [B2] PRV CLOSED detection: compare downstream head vs H_prv (not H_upstream)
+ *        Prevents false CLOSED state when there are 3+ PRV neighbors
+ *   [B3] Post-solve link flow: two-pass iterative minor loss R for self-consistency
+ *   [B4] PRV CLOSED links: flow zeroed in post-solve (not just in NR loop)
+ *   [B5] NR step cap: increased floor to el-50m (allows siphon) and cap to 10m
+ *   [B6] flipCV: removed incorrect intermediate _adjRemoveLink on mutated link
+ *   [B7] PRV Mode A/B: UI toggle for explicit upstream direction selection
  *
  * @param {number} hourOfDay  Current EPS hour (0–24)
  * @returns {{ iters:number, converged:boolean, maxRes:number }}
@@ -1541,7 +1529,8 @@ function _solveHydraulics(hourOfDay) {
 
   // ─── Solver parameters ────────────────────────────────────────────────────
   const MAX_ITER   = 200;
-  const TOL        = 1e-6;      // m³/s — convergence on flow residuals
+  const TOL        = 1e-6;      // m³/s — convergence on flow residuals (L∞ norm)
+  const TOL_FLOW   = 1e-5;      // m³/h — secondary convergence on flow balance
   const EXP_INV    = 1.0 / 1.852;
   const EXP_DER    = EXP_INV;
   let omega        = 1.0;       // SOR relaxation factor (adaptive)
@@ -1624,16 +1613,20 @@ function _solveHydraulics(hourOfDay) {
         H_prv = H_upstream;
       }
 
-      // CLOSED: check if any downstream neighbor pushes back higher head
-      // (reverse flow condition — PRV body physically blocks reverse)
-      if (_adj && state !== 'OPEN') {
+      // CLOSED: check if any downstream neighbor pushes back higher head than
+      // the PRV's controlled downstream head (H_prv).
+      // A downstream head ABOVE H_prv means reverse flow pressure — PRV blocks it.
+      // We compare against H_prv (not H_upstream) because the PRV body sits at H_prv.
+      // If downstream head > H_prv → reverse flow → CLOSED.
+      // Also: if downstream head > H_upstream → definitely reversed relative to full system.
+      if (_adj && upstreamNodeId !== null) {
         for (const { neighborId } of _adj) {
           if (neighborId === upstreamNodeId) continue;
           if (!reachable.has(neighborId)) continue;
           const nb = nodeMap.get(neighborId);
-          if (nb && nb.head > H_upstream) {
+          if (nb && nb.head > (state === 'ACTIVE' ? H_prv : H_upstream) + 0.01) {
             state = 'CLOSED';
-            H_prv = H_upstream; // lock head, zero flow
+            H_prv = Math.max(H_prv, nb.head); // equilibrate to prevent singularity
             break;
           }
         }
@@ -1666,6 +1659,38 @@ function _solveHydraulics(hourOfDay) {
       let sumdQdH = 0;   // Σ|∂Q/∂H_n|
 
       const adj = adjacency.get(n.id);
+
+      // [FIX-MINOR-v4] Pre-compute this node's own minor resistance ONCE,
+      // then split it equally across its active (non-blocked, non-closed) pipes.
+      // This prevents the old bug where n's minor loss was added once PER pipe,
+      // causing (pipe_count × K) instead of K.
+      let nOwnMinorR_total = 0;
+      let nActivePipeCount = 0;
+      if ((n.type === 'valve' || n.type === 'check_valve') && adj) {
+        // Count active pipes first
+        for (const { linkId, neighborId } of adj) {
+          if (!reachable.has(neighborId)) continue;
+          if (cvBlocked.has(linkId)) continue;
+          const nbN = nodeMap.get(neighborId);
+          if (!nbN) continue;
+          if (nbN.type === 'prv') { const ps = prvStates.get(neighborId); if (ps && ps.state === 'CLOSED') continue; }
+          nActivePipeCount++;
+        }
+        if (nActivePipeCount > 0) {
+          // Use a representative Q estimate from adjacent heads
+          let sumAdjH = 0, cntAdjH = 0;
+          for (const { neighborId } of adj) {
+            const nb2 = nodeMap.get(neighborId);
+            if (nb2 && reachable.has(neighborId)) { sumAdjH += Math.abs((nb2.head||0) - (n.head||0)); cntAdjH++; }
+          }
+          const avgDH = cntAdjH > 0 ? sumAdjH / cntAdjH : 0;
+          const Q_ref = avgDH > 1e-10 ? Math.pow(avgDH / Math.max(pipeResistance(linkMap.get([...adj][0]?.linkId) || {len:1,dia:100,c:150}), 1e-10), EXP_INV) : 1e-4;
+          const op = n.type === 'valve' ? (n.openPercent ?? 100) : 100;
+          nOwnMinorR_total = nodeMinorResistance(n.type, 100, op, Q_ref);
+        }
+      }
+      const nOwnMinorR_perPipe = nActivePipeCount > 0 ? nOwnMinorR_total / nActivePipeCount : 0;
+
       if (adj) {
         for (const { linkId, neighborId } of adj) {
           if (!reachable.has(neighborId)) continue;
@@ -1687,7 +1712,10 @@ function _solveHydraulics(hourOfDay) {
           // [FIXED B1] Pipe resistance = friction only
           let R = pipeResistance(l);
 
-          // [FIXED B1] Add inline node minor loss for valve/CV nodes
+          // [FIX-MINOR-v4] Add inline node minor loss correctly:
+          // - For NEIGHBOR nodes that are valve/CV: add their full minor loss
+          //   (the neighbor's own split is handled when the solver processes that node)
+          // - For THIS node (n): add the pre-computed per-pipe split of n's resistance
           const nS = nodeMap.get(l.s);
           const nE = nodeMap.get(l.e);
           const dH_est   = (nS?.head ?? 0) - (nE?.head ?? 0);
@@ -1695,18 +1723,17 @@ function _solveHydraulics(hourOfDay) {
             ? Math.pow(Math.abs(dH_est) / Math.max(R, 1e-10), EXP_INV)
             : 0;
 
-          if (nS && (nS.type === 'valve' || nS.type === 'check_valve') && nS.id !== n.id) {
+          // Neighbor node minor loss (only the neighbor, not n)
+          if (nS && nS.id === neighborId && (nS.type === 'valve' || nS.type === 'check_valve')) {
             const op = nS.type === 'valve' ? (nS.openPercent ?? 100) : 100;
             R += nodeMinorResistance(nS.type, l.dia || 100, op, Q_est_m3s);
           }
-          if (nE && (nE.type === 'valve' || nE.type === 'check_valve') && nE.id !== n.id) {
+          if (nE && nE.id === neighborId && (nE.type === 'valve' || nE.type === 'check_valve')) {
             const op = nE.type === 'valve' ? (nE.openPercent ?? 100) : 100;
             R += nodeMinorResistance(nE.type, l.dia || 100, op, Q_est_m3s);
           }
-          if ((n.type === 'valve' || n.type === 'check_valve')) {
-            const op = n.type === 'valve' ? (n.openPercent ?? 100) : 100;
-            R += nodeMinorResistance(n.type, l.dia || 100, op, Q_est_m3s);
-          }
+          // This node's minor loss: add the per-pipe split
+          R += nOwnMinorR_perPipe;
 
           if (R <= 0) continue;
 
@@ -1731,7 +1758,11 @@ function _solveHydraulics(hourOfDay) {
       if (absRes > maxRes) maxRes = absRes;
 
       if (sumdQdH > 1e-14) {
-        let _maxAdjDH = 1.0;
+        // Newton-Raphson head correction: ΔH = f(H) / f'(H)
+        const rawDH  = residual / sumdQdH;
+        // Physics-based step cap: limit to 10 m per iteration to prevent divergence
+        // Also limit to 50% of the max adjacent head difference for stability
+        let _maxAdjDH = 2.0;
         if (adj) {
           for (const { neighborId: _nid } of adj) {
             const _nb2 = nodeMap.get(_nid);
@@ -1741,13 +1772,12 @@ function _solveHydraulics(hourOfDay) {
             }
           }
         }
-        const rawDH  = residual / sumdQdH;
-        const stepCap = Math.min(5.0, 0.4 * _maxAdjDH);
+        const stepCap = Math.min(10.0, 0.5 * _maxAdjDH);
         const clampDH = Math.max(-stepCap, Math.min(stepCap, rawDH));
         n.head += omega * clampDH;
-        n.head = Math.max(n.el - 20.0, n.head);
+        n.head = Math.max(n.el - 50.0, n.head);  // allow negative pressure up to 50m below el (siphon)
       } else if (residual < -1e-9) {
-        n.head = Math.max(n.el - 20.0, n.head - 0.5 * omega);
+        n.head = Math.max(n.el - 50.0, n.head - 0.5 * omega);
       }
     }
 
@@ -1835,6 +1865,8 @@ function _solveHydraulics(hourOfDay) {
   });
 
   // ─── Post-solve: Link flows, velocities, head losses ─────────────────────
+  // For PRV-adjacent links: ensure flow direction respects PRV state
+  const EXP_INV_POST = 1.0 / 1.852; // local alias for use in post-solve closures
   links.forEach(l => {
     const n1 = nodeMap.get(l.s);
     const n2 = nodeMap.get(l.e);
@@ -1862,6 +1894,15 @@ function _solveHydraulics(hourOfDay) {
       return;
     }
 
+    // Check if either endpoint is a CLOSED PRV → block flow
+    if ((n1.type === 'prv' && prvStates.get(n1.id)?.state === 'CLOSED') ||
+        (n2.type === 'prv' && prvStates.get(n2.id)?.state === 'CLOSED')) {
+      l.flow = 0; l.vel = 0;
+      l.hl   = Math.abs((n1.head || 0) - (n2.head || 0));
+      l.hf   = l.hl; l.hm = 0; l.re = 0;
+      return;
+    }
+
     const D_m = Math.max(l.dia || 100, 1) / 1000;
     const C   = Math.max(l.c   || 150, 1);
     const A   = Math.PI * (D_m / 2) * (D_m / 2);
@@ -1872,19 +1913,33 @@ function _solveHydraulics(hourOfDay) {
 
     // [FIXED B1] Compute effective resistance including inline accessory minor losses
     const R_hw = pipeResistance(l);  // friction only
-    // Add inline node minor losses to get total R for flow calculation
+    // Add inline node minor losses — iterate once for self-consistency
     let R_total = R_hw;
-    const Q_est = aH > 1e-12 ? Math.pow(aH / R_hw, EXP_INV) : 0;
+    // First estimate of Q using friction-only R
+    const Q_est0 = aH > 1e-12 ? Math.pow(aH / Math.max(R_hw, 1e-15), EXP_INV_POST) : 0;
     if (n1.type === 'valve' || n1.type === 'check_valve') {
       const op = n1.type === 'valve' ? (n1.openPercent ?? 100) : 100;
-      R_total += nodeMinorResistance(n1.type, l.dia || 100, op, Q_est);
+      R_total += nodeMinorResistance(n1.type, l.dia || 100, op, Q_est0);
     }
     if (n2.type === 'valve' || n2.type === 'check_valve') {
       const op = n2.type === 'valve' ? (n2.openPercent ?? 100) : 100;
-      R_total += nodeMinorResistance(n2.type, l.dia || 100, op, Q_est);
+      R_total += nodeMinorResistance(n2.type, l.dia || 100, op, Q_est0);
     }
+    // Second pass Q with updated R_total for better accuracy
+    const Q_est1 = aH > 1e-12 ? Math.pow(aH / Math.max(R_total, 1e-15), EXP_INV_POST) : 0;
+    // Re-compute R with better Q estimate
+    let R_total2 = R_hw;
+    if (n1.type === 'valve' || n1.type === 'check_valve') {
+      const op = n1.type === 'valve' ? (n1.openPercent ?? 100) : 100;
+      R_total2 += nodeMinorResistance(n1.type, l.dia || 100, op, Q_est1);
+    }
+    if (n2.type === 'valve' || n2.type === 'check_valve') {
+      const op = n2.type === 'valve' ? (n2.openPercent ?? 100) : 100;
+      R_total2 += nodeMinorResistance(n2.type, l.dia || 100, op, Q_est1);
+    }
+    R_total = R_total2;
 
-    const Q_m3s = aH > 1e-12 ? Math.pow(aH / Math.max(R_total, 1e-15), EXP_INV) : 0.0;
+    const Q_m3s = aH > 1e-12 ? Math.pow(aH / Math.max(R_total, 1e-15), EXP_INV_POST) : 0.0;
 
     l.flow = Q_m3s * 3600.0 * sign;
     l.vel  = (Q_m3s / A) * sign;
@@ -2549,6 +2604,24 @@ function openProp(id, type) {
       } else {
         // Show toggle buttons for each neighbor — user selects which is UPSTREAM
         dirHtml = `<div style="font-size:9px;color:#92400e;margin-bottom:6px;line-height:1.4;">👆 กดเลือก node ที่เป็น <b>ด้านน้ำเข้า (Upstream / แรงดันสูง)</b><br>ด้านที่เหลือจะเป็น Downstream โดยอัตโนมัติ</div>`;
+        // Add Mode A/B quick-swap if exactly 2 neighbors
+        if (_neighbors.length === 2) {
+          const modeAUp = _neighbors[0].id;
+          const modeBUp = _neighbors[1].id;
+          const isModeA = el.prvInlet === modeAUp;
+          const isModeB = el.prvInlet === modeBUp;
+          dirHtml += `<div style="display:flex;gap:6px;margin-bottom:8px;">
+            <button onclick="setPRVInlet('${el.id}','${modeAUp}')"
+              style="flex:1;padding:7px 10px;border-radius:9px;border:2px solid ${isModeA?'#f97316':'#e2e8f0'};background:${isModeA?'#fff7ed':'white'};font-size:9px;font-weight:800;cursor:pointer;font-family:var(--sans);color:${isModeA?'#ea580c':'#64748b'};">
+              ▶ Mode A<br><span style="font-size:8px;font-weight:700;">${_neighbors[0].name} → เข้า</span>
+            </button>
+            <div style="display:flex;align-items:center;font-size:12px;color:#94a3b8;">⇄</div>
+            <button onclick="setPRVInlet('${el.id}','${modeBUp}')"
+              style="flex:1;padding:7px 10px;border-radius:9px;border:2px solid ${isModeB?'#f97316':'#e2e8f0'};background:${isModeB?'#fff7ed':'white'};font-size:9px;font-weight:800;cursor:pointer;font-family:var(--sans);color:${isModeB?'#ea580c':'#64748b'};">
+              ◀ Mode B<br><span style="font-size:8px;font-weight:700;">${_neighbors[1].name} → เข้า</span>
+            </button>
+          </div>`;
+        }
         dirHtml += `<div id="prv_dir_btns" style="display:flex;flex-direction:column;gap:6px;">`;
         _neighbors.forEach(nb => {
           const isUp = nb.isUpstream;
@@ -2875,15 +2948,15 @@ function setPRVInlet(prvId, inletNodeId) {
 
 function flipCV(id) {
   // Flip all links connecting to this check valve (swap s/e)
+  // This reverses the allowed-flow direction of the check valve.
   links.forEach(l => {
     if (l.s === id || l.e === id) {
       const tmp = l.s; l.s = l.e; l.e = tmp;
-      // Update adjacency for flipped link
-      _adjRemoveLink({ ...l, s: l.e, e: l.s }); // remove old
-      // adjacency already updated since we mutated l.s/l.e above
+      // Note: we do NOT call _adjRemoveLink here — it would operate on the already-mutated
+      // l.s/l.e values. rebuildIndexes() below will reconstruct adjacency correctly.
     }
   });
-  // Rebuild adjacency for correctness after flip
+  // Rebuild adjacency from scratch after all flips
   rebuildIndexes();
   const cv = nodeMap.get(id);
   if (cv) cv.cvBlocked = false;
@@ -3163,6 +3236,35 @@ function openReport() {
     </tr>`;
   });
   html += `</tbody></table></div>`;
+
+  html += `<div style="background:#f8fafc;border-radius:12px;padding:12px;border:1px solid #e2e8f0;margin-bottom:16px;">
+    <div style="font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px;font-family:var(--sans);">📐 HGL / Energy Diagnostics</div>
+    <div style="font-size:9px;font-family:var(--mono);color:#475569;line-height:1.8;">
+      <div>• HGL (Hydraulic Grade Line) = Total Head (H) at each node [m MSL]</div>
+      <div>• Pressure Head = HGL − Node Elevation = H − el [m WC]</div>
+      <div>• Velocity Head ≈ V²/2g [m] (shown per pipe below)</div>
+      <div>• EGL = HGL + Velocity Head ≈ HGL for low-velocity distribution systems</div>
+      <div>• Headloss gradient = h_f / L [m/m] — typical range 0.001–0.01 m/m</div>
+    </div>
+    <div style="margin-top:8px;overflow-x:auto;"><table class="report-table">
+      <thead><tr><th>Pipe</th><th>L (m)</th><th>Q (m³/h)</th><th>V (m/s)</th><th>V²/2g (mm)</th><th>h_f/L (m/m)</th><th>Re</th></tr></thead>
+      <tbody>${links.filter(l => Math.abs(l.flow||0) > 0.001).map(l => {
+        const vhead_mm = Math.pow(Math.abs(l.vel||0),2)/(2*9.81)*1000;
+        const hfl = l.len > 0 ? (l.hf||0)/l.len : 0;
+        const re  = l.re || 0;
+        const reClass = re < 2300 ? 'color:#2563eb' : re < 4000 ? 'color:#f59e0b' : 'color:#22c55e';
+        return `<tr>
+          <td style="font-family:var(--mono);font-size:9px;">${l.id}</td>
+          <td style="font-family:var(--mono);">${l.len.toFixed(1)}</td>
+          <td>${Math.abs(l.flow||0).toFixed(3)}</td>
+          <td style="font-family:var(--mono);">${Math.abs(l.vel||0).toFixed(3)}</td>
+          <td style="font-family:var(--mono);">${vhead_mm.toFixed(2)}</td>
+          <td style="font-family:var(--mono);color:#ef4444;">${hfl.toFixed(5)}</td>
+          <td style="font-family:var(--mono);${reClass};">${re.toFixed(0)}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>
+  </div>`;
 
   html += `<div style="background:#f8fafc;border-radius:12px;padding:12px;border:1px solid #e2e8f0;">
     <div style="font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px;font-family:var(--sans);">🔢 Solver Statistics</div>
