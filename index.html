@@ -1242,15 +1242,33 @@ async function calculate() {
   isEPSComputed = false;
   isCalculated  = false;
 
-  // Freeze baseDem for EPS scaling
+  // ── [FIX-DEMAND] Freeze baseDem for EPS scaling ──────────────────────────
+  // CRITICAL: baseDem is the user-input field (saved by saveProp).
+  // dem is the *hourly* demand = baseDem × pattern_multiplier.
+  // We must always re-derive dem from baseDem — NEVER use stale dem as input.
   nodes.forEach(n => {
     n.history = { head:[], p:[], dem:[], wl:[] };
     if (!['reservoir','tank','pump'].includes(n.type)) {
-      n.baseDem = n.baseDem ?? n.dem ?? 0;
+      // Ensure baseDem is always canonical — use dem as fallback only if baseDem missing
+      if (n.baseDem === undefined || n.baseDem === null) {
+        n.baseDem = parseFloat(n.dem) || 0;
+      }
+      n.baseDem = parseFloat(n.baseDem) || 0;
+      // Reset dem to baseDem × 1.0 so solver sees correct initial demand
+      n.dem = n.baseDem;
     }
     if (n.type === 'tank') {
-      n.waterLevel = n.waterLevel || 5;
+      n.waterLevel = n.waterLevel !== undefined ? n.waterLevel : 5;
       n.baseDem    = 0;
+      n.dem        = 0;
+    }
+    if (n.type === 'prv') {
+      n.baseDem = 0;
+      n.dem     = 0;
+    }
+    if (n.type === 'valve' || n.type === 'check_valve') {
+      n.baseDem = 0;
+      n.dem     = 0;
     }
   });
   links.forEach(l => {
@@ -1270,9 +1288,10 @@ async function calculate() {
     const patMult = PATTERN_DIURNAL[t] ?? 1.0;
 
     nodes.forEach(n => {
-      if (!['reservoir','tank','pump'].includes(n.type)) {
-        n.dem = (n.baseDem || 0) * patMult;
-      }
+      if (['reservoir','tank','pump','prv','valve','check_valve'].includes(n.type)) return;
+      // [FIX-DEMAND] dem = baseDem × diurnal pattern (m³/h)
+      // baseDem is the canonical user input; always multiply from it
+      n.dem = (parseFloat(n.baseDem) || 0) * patMult;
     });
 
     nodes.filter(n => n.type === 'tank').forEach(tk => {
@@ -1530,11 +1549,106 @@ function _solveHydraulics(hourOfDay) {
   let iters = 0, maxRes = 0, converged = false;
   let prevMaxRes = Infinity;
 
-  // ─── [B2 FIX] PRV state: computed ONCE per outer iteration, applied after NR ──
-  // PRV nodes have their head overridden AFTER the full NR pass, not inside it.
-  // This prevents the oscillation caused by PRV constraint fighting NR updates.
-
   // ─── Main NR iteration loop ───────────────────────────────────────────────
+  //
+  // PRV HYDRAULIC MODEL (v4.0):
+  // ─────────────────────────────────────────────────────────────────────────
+  // PRV is modeled as a NODE with FIXED HEAD on its downstream side.
+  // The PRV node represents the controlled (downstream) pressure zone.
+  //
+  // How it works inside NR:
+  //   1. PRV node is EXCLUDED from the NR update (treated like a pseudo-source)
+  //   2. Its head is set each iteration by the PRV control equation:
+  //      - ACTIVE: H_prv = el_prv + setting  (if H_upstream > setting+el)
+  //      - OPEN:   H_prv = H_upstream        (upstream can't provide enough head)
+  //      - CLOSED: H_prv isolated            (reverse flow blocked)
+  //   3. Upstream node sees PRV as a neighbor with fixed head → NR computes
+  //      the flow Q = f(H_upstream - H_prv, R_pipe) naturally via Hazen-Williams
+  //   4. PRV headloss = H_upstream - H_prv (energy dissipated in valve body)
+  //   5. This correctly propagates headloss upstream (energy balance preserved)
+  //
+  // prvInlet = user-specified upstream node ID (or null = auto-detect max-head neighbor)
+  // prvDirection = 'AB' means link.s→link.e direction is upstream→PRV→downstream
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Pre-compute PRV states ONCE before main loop (updated each iteration)
+  // Map: prvNodeId → { state, H_set, upstreamNodeId }
+  const prvStates = new Map();
+
+  function updatePRVStates() {
+    for (const n of nodes) {
+      if (n.type !== 'prv') continue;
+      if (!reachable.has(n.id)) continue;
+
+      const prvSetting = (n.prvSchedule && n.prvSchedule[h] !== undefined && n.prvSchedule[h] !== null)
+        ? parseFloat(n.prvSchedule[h])
+        : parseFloat(n.setting) || 15.0;
+      const H_set = n.el + Math.max(0, prvSetting);
+
+      // Determine upstream node: explicit prvInlet takes priority
+      let H_upstream = -Infinity;
+      let upstreamNodeId = null;
+      const _adj = adjacency.get(n.id);
+
+      if (n.prvInlet && nodeMap.has(n.prvInlet) && reachable.has(n.prvInlet)) {
+        // User explicitly set upstream side
+        upstreamNodeId = n.prvInlet;
+        H_upstream = nodeMap.get(n.prvInlet).head;
+      } else if (_adj) {
+        // Auto-detect: upstream = neighbor with HIGHEST current head
+        for (const { neighborId } of _adj) {
+          if (!reachable.has(neighborId)) continue;
+          const nb = nodeMap.get(neighborId);
+          if (nb && nb.head > H_upstream) {
+            H_upstream = nb.head;
+            upstreamNodeId = neighborId;
+          }
+        }
+      }
+
+      let state = 'OPEN';
+      let H_prv = n.el; // fallback
+
+      if (upstreamNodeId === null || H_upstream === -Infinity) {
+        // Isolated PRV — treat as open with zero flow
+        state = 'OPEN';
+        H_prv = n.el;
+      } else if (H_upstream > H_set) {
+        // ACTIVE: upstream head exceeds setpoint → regulate downstream
+        state = 'ACTIVE';
+        H_prv = H_set;
+      } else {
+        // OPEN: upstream head insufficient → full-open pass-through
+        // PRV acts as open pipe — negligible loss (use upstream head)
+        state = 'OPEN';
+        H_prv = H_upstream;
+      }
+
+      // CLOSED: check if any downstream neighbor pushes back higher head
+      // (reverse flow condition — PRV body physically blocks reverse)
+      if (_adj && state !== 'OPEN') {
+        for (const { neighborId } of _adj) {
+          if (neighborId === upstreamNodeId) continue;
+          if (!reachable.has(neighborId)) continue;
+          const nb = nodeMap.get(neighborId);
+          if (nb && nb.head > H_upstream) {
+            state = 'CLOSED';
+            H_prv = H_upstream; // lock head, zero flow
+            break;
+          }
+        }
+      }
+
+      prvStates.set(n.id, { state, H_prv, H_set, upstreamNodeId });
+      // Apply head constraint immediately so NR neighbors see correct PRV head
+      n.head = H_prv;
+      n.prvState = state;
+    }
+  }
+
+  // Initialize PRV states from initial head estimates
+  updatePRVStates();
+
   for (let iter = 0; iter < MAX_ITER; iter++) {
     maxRes = 0;
 
@@ -1543,8 +1657,10 @@ function _solveHydraulics(hourOfDay) {
       if (SOURCE_TYPES.has(n.type)) continue;
       if (!reachable.has(n.id))     continue;
       if (closedValveNodes.has(n.id)) continue;
-      // PRV nodes participate in NR normally (their head is corrected post-NR)
-      // Valve (gate) nodes also participate in NR — their K is applied per-link
+
+      // [FIX-PRV] PRV nodes are FIXED HEAD — skip NR update for them
+      // Their head is controlled by updatePRVStates() each iteration
+      if (n.type === 'prv') continue;
 
       let sumQ    = 0;   // net inflow to node (m³/s)
       let sumdQdH = 0;   // Σ|∂Q/∂H_n|
@@ -1558,17 +1674,20 @@ function _solveHydraulics(hourOfDay) {
           if (!l) continue;
 
           // [FIXED B4] Check valve: use pre-determined blocked state
-          if (cvBlocked.has(linkId)) continue;  // no flow through blocked CV
+          if (cvBlocked.has(linkId)) continue;
 
-          const nb = nodeMap.get(neighborId);
-          if (!nb) continue;
+          // [FIX-PRV] If neighbor is PRV in CLOSED state, skip this link
+          const nbNode = nodeMap.get(neighborId);
+          if (!nbNode) continue;
+          if (nbNode.type === 'prv') {
+            const ps = prvStates.get(neighborId);
+            if (ps && ps.state === 'CLOSED') continue;
+          }
 
-          // [FIXED B1] Pipe resistance = friction only (no endpoint K duplication)
+          // [FIXED B1] Pipe resistance = friction only
           let R = pipeResistance(l);
 
           // [FIXED B1] Add inline node minor loss for valve/CV nodes
-          // Only applied to links adjacent to the accessory node
-          // Use Q estimate from current head difference for linearization
           const nS = nodeMap.get(l.s);
           const nE = nodeMap.get(l.e);
           const dH_est   = (nS?.head ?? 0) - (nE?.head ?? 0);
@@ -1576,28 +1695,22 @@ function _solveHydraulics(hourOfDay) {
             ? Math.pow(Math.abs(dH_est) / Math.max(R, 1e-10), EXP_INV)
             : 0;
 
-          // Add minor loss for inline accessory at EITHER endpoint of this link
-          // (but only count each inline node once, i.e., the one that IS an accessory)
           if (nS && (nS.type === 'valve' || nS.type === 'check_valve') && nS.id !== n.id) {
-            const dia_mm = l.dia || 100;
-            const op     = nS.type === 'valve' ? (nS.openPercent ?? 100) : 100;
-            R += nodeMinorResistance(nS.type, dia_mm, op, Q_est_m3s);
+            const op = nS.type === 'valve' ? (nS.openPercent ?? 100) : 100;
+            R += nodeMinorResistance(nS.type, l.dia || 100, op, Q_est_m3s);
           }
           if (nE && (nE.type === 'valve' || nE.type === 'check_valve') && nE.id !== n.id) {
-            const dia_mm = l.dia || 100;
-            const op     = nE.type === 'valve' ? (nE.openPercent ?? 100) : 100;
-            R += nodeMinorResistance(nE.type, dia_mm, op, Q_est_m3s);
+            const op = nE.type === 'valve' ? (nE.openPercent ?? 100) : 100;
+            R += nodeMinorResistance(nE.type, l.dia || 100, op, Q_est_m3s);
           }
-          // Also add minor loss if THIS node itself is a valve/CV
           if ((n.type === 'valve' || n.type === 'check_valve')) {
-            const dia_mm = l.dia || 100;
-            const op     = n.type === 'valve' ? (n.openPercent ?? 100) : 100;
-            R += nodeMinorResistance(n.type, dia_mm, op, Q_est_m3s);
+            const op = n.type === 'valve' ? (n.openPercent ?? 100) : 100;
+            R += nodeMinorResistance(n.type, l.dia || 100, op, Q_est_m3s);
           }
 
           if (R <= 0) continue;
 
-          const dH   = nb.head - n.head;
+          const dH   = nbNode.head - n.head;
           const aH   = Math.abs(dH);
           const sign  = dH >= 0.0 ? 1.0 : -1.0;
 
@@ -1610,13 +1723,13 @@ function _solveHydraulics(hourOfDay) {
         }
       }
 
-      // Continuity residual: f = Σ(Q_in) - d_n  [m³/s]
-      const dem_m3s = (n.dem || 0) / 3600.0;
+      // [FIX-DEMAND] Continuity residual: f = Σ(Q_in) - d_n  [m³/s]
+      // dem is already in m³/h (set by EPS loop from baseDem × pattern)
+      const dem_m3s = (parseFloat(n.dem) || 0) / 3600.0;
       const residual = sumQ - dem_m3s;
       const absRes   = Math.abs(residual);
       if (absRes > maxRes) maxRes = absRes;
 
-      // Newton-Raphson head update with adaptive step-size cap
       if (sumdQdH > 1e-14) {
         let _maxAdjDH = 1.0;
         if (adj) {
@@ -1638,79 +1751,17 @@ function _solveHydraulics(hourOfDay) {
       }
     }
 
-    // ── [FIXED B2] PRV post-NR correction (OUTSIDE inner loop) ───────────────
-    // After all junction heads are updated by NR, apply PRV head constraints.
-    // This decouples PRV logic from NR iteration → no oscillation.
-    //
-    // PRV hydraulic states (per AWWA M44 / EPANET PRV logic):
-    //   ACTIVE:  H_upstream > (el + setting) AND flow forward → set H_dn = el + setting
-    //   OPEN:    H_upstream ≤ (el + setting)                  → pass-through (no constraint)
-    //   CLOSED:  Reverse flow detected                         → block flow (H_dn = H_up)
-    for (const n of nodes) {
-      if (n.type !== 'prv') continue;
-      if (!reachable.has(n.id)) continue;
-
-      // Get setting for this hour (EPS schedule or static)
-      const prvSetting = (n.prvSchedule && n.prvSchedule[h] !== undefined && n.prvSchedule[h] !== null)
-        ? parseFloat(n.prvSchedule[h])
-        : (n.setting || 15.0);
-      const H_set = n.el + Math.max(0, prvSetting);  // downstream target head
-
-      // [FIXED B6] Determine upstream head:
-      // Use explicitly configured prvInlet if set,
-      // otherwise pick the neighbor with the HIGHEST head (= upstream, per PRV physics)
-      let H_upstream = -Infinity;
-      let upstreamNodeId = null;
-      const _adj = adjacency.get(n.id);
-
-      if (n.prvInlet && nodeMap.has(n.prvInlet) && reachable.has(n.prvInlet)) {
-        H_upstream = nodeMap.get(n.prvInlet).head;
-        upstreamNodeId = n.prvInlet;
-      } else if (_adj) {
-        for (const { neighborId } of _adj) {
-          if (!reachable.has(neighborId)) continue;
-          const _nb = nodeMap.get(neighborId);
-          if (_nb && _nb.head > H_upstream) {
-            H_upstream = _nb.head;
-            upstreamNodeId = neighborId;
-          }
-        }
-      }
-
-      if (H_upstream === -Infinity) continue;  // no upstream found
-
-      // Determine PRV state and apply head constraint
-      if (H_upstream > H_set) {
-        // ACTIVE mode: regulate downstream head to setting
-        n.head = H_set;
-        n.prvState = 'ACTIVE';
-      } else {
-        // OPEN mode: upstream pressure insufficient → full open, pass-through
-        // PRV head = upstream head minus negligible loss (treat as open pipe)
-        // Do NOT set n.head below upstream — PRV cannot boost pressure
-        n.head = H_upstream;  // pass-through (upstream == downstream when fully open)
-        n.prvState = 'OPEN';
-      }
-
-      // CLOSED mode: prevent reverse flow (downstream must not exceed upstream)
-      // If any downstream neighbor has higher head than upstream, clamp
-      if (_adj) {
-        for (const { neighborId } of _adj) {
-          if (neighborId === upstreamNodeId) continue;
-          if (!reachable.has(neighborId)) continue;
-          const _nb = nodeMap.get(neighborId);
-          // If downstream node has higher head → reverse flow → block
-          if (_nb && _nb.head > H_upstream) {
-            n.head = H_upstream;  // PRV locks, no reverse flow
-            n.prvState = 'CLOSED';
-            break;
-          }
-        }
-      }
-    }
+    // ── [FIX-PRV v4] Update PRV states AFTER NR pass ─────────────────────
+    // Upstream heads are now updated → re-compute PRV operating state
+    updatePRVStates();
 
     // ── Pump head update (pump curve iteration) ───────────────────────────
-    // [FIXED B5] Compute pump operating point from actual downstream NR heads
+    // Pump is modeled as a FIXED-HEAD SOURCE.
+    // Head = el_pump + H_pump(Q)  where H_pump = H0 - r×Q²
+    //
+    // Q_pump = total flow from pump into downstream pipe(s)
+    // Downstream = neighbor where H_neighbor < H_pump (flow direction away from pump)
+    // If suction pipe connected (e.g., reservoir at lower head), ignore it for pump curve.
     for (const p of nodes) {
       if (p.type !== 'pump' || !activePumpIds.has(p.id)) continue;
       if (!reachable.has(p.id)) continue;
@@ -1718,7 +1769,7 @@ function _solveHydraulics(hourOfDay) {
       const pp = pumpParams.get(p.id);
       if (!pp) continue;
 
-      // Sum outflow from pump to downstream nodes
+      // Sum ONLY outgoing flow (to discharge side)
       let Q_pump_m3s = 0;
       const adj = adjacency.get(p.id);
       if (adj) {
@@ -1728,19 +1779,17 @@ function _solveHydraulics(hourOfDay) {
           if (!l) continue;
           const nb = nodeMap.get(neighborId);
           if (!nb) continue;
-          // Use friction-only resistance for pump flow estimate
+          // Only count discharge side (head differential is pump → downstream)
           const R = pipeResistance(l);
           if (R <= 0) continue;
-
           const dH = p.head - nb.head;
-          const aH = Math.abs(dH);
-          if (aH > 1e-10 && dH > 0) {  // only forward flow from pump
-            Q_pump_m3s += Math.pow(aH / R, EXP_INV);
+          if (dH > 0) {  // flow going OUT from pump
+            Q_pump_m3s += Math.pow(dH / R, EXP_INV);
           }
         }
       }
 
-      // Pump curve: H = H0 - r × Q²  (clamp Q to [0, Q_max])
+      // Pump curve: H = H0 - r × Q²
       const Q_max = Math.sqrt(pp.H0 / Math.max(pp.r_pump, 1e-10));
       const Q_clamped = Math.max(0, Math.min(Q_pump_m3s, Q_max));
       const H_pump = Math.max(0, pp.H0 - pp.r_pump * Q_clamped * Q_clamped);
@@ -2429,9 +2478,14 @@ function openProp(id, type) {
     if (type === 'node') {
       const pb = (el.p || 0) / 10.197;
       const pColor = pb <= 0 ? '#374151' : pb < 0.5 ? '#ef4444' : pb < 1 ? '#f97316' : pb <= 7 ? '#22c55e' : pb <= 10 ? '#ea580c' : '#9333ea';
+      const demVal = parseFloat(el.baseDem) || 0;
+      const demRow = (el.type === 'junction' && demVal > 0)
+        ? `<div class="res-item"><span class="res-label">💧 Demand (คำนวณ)</span><span class="res-val" style="color:#2563eb;">${(el.dem||0).toFixed(3)} m³/h (Base=${demVal.toFixed(2)})</span></div>`
+        : '';
       res = `<div class="panel-res-box">
         <div class="res-item"><span class="res-label">📊 Total Head</span><span class="res-val">${(el.head || 0).toFixed(3)} m</span></div>
         <div class="res-item"><span class="res-label">🟡 Pressure</span><span class="res-val" style="color:${pColor};">${pb.toFixed(3)} bar (${(el.p || 0).toFixed(2)} mWC)</span></div>
+        ${demRow}
       </div>`;
     } else {
       const vColor = Math.abs(el.vel || 0) > 2.5 ? '#ef4444' : Math.abs(el.vel || 0) > 1.5 ? '#f59e0b' : '#22c55e';
@@ -2470,13 +2524,74 @@ function openProp(id, type) {
       const cps = el.prvSize || 100;
       const pso = PIPE_SIZES.filter(s => s >= 40 && s <= 600).map(s => `<option value="${s}" ${cps == s ? 'selected' : ''}>${s} mm</option>`).join('');
       const imf = ((Math.PI * Math.pow(cps / 2000, 2)) * 2.5 * 3600).toFixed(1);
-      // ตัวเลือก upstream node
-      const upstreamOpts = [
-        `<option value="">-- อัตโนมัติ (ใช้ node ที่มีแรงดันสูงสุด) --</option>`,
-        ...nodes
-          .filter(nx => nx.id !== el.id)
-          .map(nx => `<option value="${nx.id}" ${el.prvInlet === nx.id ? 'selected' : ''}>${TYPE_NAMES[nx.type]||nx.type} (el=${nx.el.toFixed(1)}m)</option>`)
-      ].join('');
+
+      // ─── Direction Control: find actual connected neighbors ──────────────
+      // Build list of neighbor nodes from adjacency (what's physically connected)
+      const _prvAdj = adjacency.get(el.id);
+      const _neighbors = [];
+      if (_prvAdj) {
+        for (const { neighborId } of _prvAdj) {
+          const _nb = nodeMap.get(neighborId);
+          if (_nb) {
+            const _isUpstream = el.prvInlet === neighborId;
+            const _headStr = isCalculated ? ` | H=${(_nb.head||0).toFixed(1)}m` : '';
+            _neighbors.push({ id: neighborId, name: TYPE_NAMES[_nb.type]||_nb.type, el: _nb.el, isUpstream: _isUpstream, headStr: _headStr });
+          }
+        }
+      }
+
+      // Build direction control UI: visual buttons for each neighbor
+      let dirHtml = '';
+      if (_neighbors.length === 0) {
+        dirHtml = `<div style="padding:8px;background:#fef2f2;border-radius:8px;font-size:9px;color:#b91c1c;">⚠ PRV ยังไม่ได้เชื่อมต่อกับท่อ — วาดท่อเชื่อม PRV ก่อน</div>`;
+      } else if (_neighbors.length === 1) {
+        dirHtml = `<div style="padding:8px;background:#fef9c3;border-radius:8px;font-size:9px;color:#854d0e;">⚠ PRV ต้องเชื่อมต่อกับท่ออย่างน้อย 2 เส้น (ด้าน Upstream และ Downstream)</div>`;
+      } else {
+        // Show toggle buttons for each neighbor — user selects which is UPSTREAM
+        dirHtml = `<div style="font-size:9px;color:#92400e;margin-bottom:6px;line-height:1.4;">👆 กดเลือก node ที่เป็น <b>ด้านน้ำเข้า (Upstream / แรงดันสูง)</b><br>ด้านที่เหลือจะเป็น Downstream โดยอัตโนมัติ</div>`;
+        dirHtml += `<div id="prv_dir_btns" style="display:flex;flex-direction:column;gap:6px;">`;
+        _neighbors.forEach(nb => {
+          const isUp = nb.isUpstream;
+          dirHtml += `<button onclick="setPRVInlet('${el.id}','${nb.id}')"
+            style="width:100%;padding:8px 12px;border-radius:10px;border:2px solid ${isUp?'#f97316':'#e2e8f0'};
+            background:${isUp?'#fff7ed':'white'};text-align:left;cursor:pointer;display:flex;justify-content:space-between;align-items:center;
+            font-family:var(--sans);transition:all 0.15s;">
+            <span style="font-size:10px;font-weight:800;color:${isUp?'#ea580c':'#64748b'};">
+              ${isUp?'⬆️ UPSTREAM (น้ำเข้า)':'◯ Downstream'}
+            </span>
+            <span style="font-size:9px;font-weight:700;color:${isUp?'#92400e':'#94a3b8'};font-family:var(--mono);">
+              ${nb.name} el=${nb.el.toFixed(1)}m${nb.headStr}
+            </span>
+          </button>`;
+        });
+        if (!el.prvInlet) {
+          dirHtml += `<div style="font-size:8.5px;color:#64748b;padding:4px 8px;background:#f8fafc;border-radius:6px;">
+            🔄 ตอนนี้: อัตโนมัติ (เลือก node แรงดันสูงสุด)</div>`;
+        }
+        dirHtml += `</div>`;
+      }
+
+      // PRV result box (if calculated)
+      let prvResultHtml = '';
+      if (isCalculated) {
+        const state = el.prvState || 'UNKNOWN';
+        const stateColor = state === 'ACTIVE' ? '#ea580c' : state === 'OPEN' ? '#16a34a' : state === 'CLOSED' ? '#b91c1c' : '#64748b';
+        const stateIcon  = state === 'ACTIVE' ? '⬇️ กำลังลดแรงดัน' : state === 'OPEN' ? '✅ เปิดเต็มที่ (pass-through)' : state === 'CLOSED' ? '⛔ บล็อกย้อน (reverse blocked)' : 'ไม่ทราบ';
+        const H_prv = el.head ?? 0;
+        const upNode = el.prvInlet ? nodeMap.get(el.prvInlet) : null;
+        const H_up   = upNode ? (upNode.head??0) : 0;
+        const H_loss = state === 'ACTIVE' ? Math.max(0, H_up - H_prv) : 0;
+        prvResultHtml = `<div style="background:${state==='ACTIVE'?'#fff7ed':state==='OPEN'?'#f0fdf4':'#fef2f2'};border-radius:10px;border:1.5px solid ${stateColor};padding:10px;">
+          <div style="font-size:10px;font-weight:800;color:${stateColor};margin-bottom:6px;">สถานะ PRV: ${stateIcon}</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:9px;font-family:var(--mono);">
+            <div style="color:#64748b;">H Upstream:</div><div style="font-weight:800;color:#0f172a;">${H_up.toFixed(3)} m</div>
+            <div style="color:#64748b;">H Downstream (PRV):</div><div style="font-weight:800;color:${stateColor};">${H_prv.toFixed(3)} m</div>
+            <div style="color:#64748b;">PRV Headloss:</div><div style="font-weight:800;color:#ef4444;">${H_loss.toFixed(3)} m</div>
+            <div style="color:#64748b;">Setting:</div><div style="font-weight:800;color:#f97316;">${(el.setting||15).toFixed(1)} m (${((el.setting||15)/10.197).toFixed(2)} bar)</div>
+          </div>
+        </div>`;
+      }
+
       // PRV schedule cells
       const prvSched = el.prvSchedule || Array(25).fill(null);
       const prvSchedCells = Array.from({length:25}, (_, i) => {
@@ -2491,27 +2606,24 @@ function openProp(id, type) {
             oninput="prvSchedInput('${el.id}',${i},this.value)">
         </div>`;
       }).join('');
+
       h += `<div style="background:#fff7ed;border:1.5px solid #fed7aa;border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:12px;">
         <div style="font-size:10px;font-weight:800;color:#ea580c;text-transform:uppercase;font-family:var(--sans);">⬇️ PRV — Pressure Reducing Valve</div>
 
         <div style="background:#fef9ef;border:1px solid #fed7aa;border-radius:10px;padding:8px;font-size:9px;color:#78350f;line-height:1.6;font-family:var(--sans);">
-          <b>หลักการทำงาน:</b> น้ำไหลทางเดียว (Upstream→Downstream)<br>
-          ถ้าแรงดัน Upstream > Setting → PRV ลดแรงดัน Downstream = Setting<br>
-          ถ้าแรงดัน Upstream ≤ Setting → PRV เปิดเต็มที่ (pass-through)<br>
-          ✓ ป้องกันการไหลย้อนในตัว
+          <b>หลักการทำงาน (AWWA / EPANET):</b><br>
+          • Upstream → PRV → Downstream<br>
+          • H_upstream &gt; Setting → <b>ACTIVE</b>: H_downstream = Setting (m) ✓<br>
+          • H_upstream ≤ Setting → <b>OPEN</b>: เปิดเต็มที่ ไม่ลดแรงดัน<br>
+          • ย้อนทาง → <b>CLOSED</b>: บล็อกอัตโนมัติ
         </div>
 
-        ${isCalculated ? (() => {
-          const state = el.prvState || 'UNKNOWN';
-          const stateColor = state === 'ACTIVE' ? '#ea580c' : state === 'OPEN' ? '#16a34a' : state === 'CLOSED' ? '#b91c1c' : '#64748b';
-          const stateIcon  = state === 'ACTIVE' ? '⬇️ ACTIVE — กำลังลดแรงดัน' : state === 'OPEN' ? '✅ OPEN — แรงดันต่ำกว่า Setting (pass-through)' : state === 'CLOSED' ? '⛔ CLOSED — ป้องกันการไหลย้อน' : '— ไม่ทราบสถานะ';
-          return `<div style="padding:8px 12px;background:${state==='ACTIVE'?'#fff7ed':state==='OPEN'?'#f0fdf4':'#fef2f2'};border-radius:10px;border:1.5px solid ${stateColor};font-size:11px;font-weight:800;color:${stateColor};font-family:var(--sans);">สถานะ PRV: ${stateIcon}</div>`;
-        })() : ''}
+        ${prvResultHtml}
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
           <div><label style="font-size:10px;font-weight:800;color:#ea580c;text-transform:uppercase;display:block;margin-bottom:6px;font-family:var(--sans);">⬇️ Setting แรงดัน (m)</label>
-            <input id="i_set" type="number" step="0.5" min="0" max="200" value="${el.setting || 15}" class="eng-input" style="border-color:#fed7aa;">
-            <div style="font-size:8.5px;color:#92400e;margin-top:3px;">${((el.setting||15)/10.197).toFixed(2)} bar downstream</div>
+            <input id="i_set" type="number" step="0.5" min="0" max="200" value="${el.setting || 15}" class="eng-input" style="border-color:#fed7aa;" oninput="document.getElementById('prv_bar_lbl').innerText=((parseFloat(this.value)||0)/10.197).toFixed(2)">
+            <div style="font-size:8.5px;color:#92400e;margin-top:3px;"><span id="prv_bar_lbl">${((el.setting||15)/10.197).toFixed(2)}</span> bar downstream</div>
           </div>
           <div><label style="font-size:10px;font-weight:800;color:#ea580c;text-transform:uppercase;display:block;margin-bottom:6px;font-family:var(--sans);">🔧 ขนาด PRV</label>
             <select id="i_prv_size" class="eng-input" style="border-color:#fed7aa;" onchange="updatePRVInfo()">${pso}</select>
@@ -2520,14 +2632,14 @@ function openProp(id, type) {
         </div>
 
         <div>
-          <label style="font-size:10px;font-weight:800;color:#ea580c;text-transform:uppercase;display:block;margin-bottom:6px;font-family:var(--sans);">⬆️ กำหนด Upstream Node (ทางน้ำเข้า)</label>
-          <select id="i_prv_inlet" class="eng-input" style="border-color:#fed7aa;">${upstreamOpts}</select>
-          <div style="font-size:8.5px;color:#92400e;margin-top:3px;">กำหนดทิศทางน้ำไหล: node ที่เลือก = ด้านแรงดันสูง (upstream)</div>
+          <label style="font-size:10px;font-weight:800;color:#ea580c;text-transform:uppercase;display:block;margin-bottom:8px;font-family:var(--sans);">🔀 กำหนดทิศทางน้ำ (Direction Control)</label>
+          ${dirHtml}
+          <input type="hidden" id="i_prv_inlet" value="${el.prvInlet || ''}">
         </div>
 
         <div>
           <div style="font-size:10px;font-weight:800;color:#7c3aed;text-transform:uppercase;margin-bottom:6px;font-family:var(--sans);">🕐 ตารางแรงดัน Setting 25 ชม. (ว่าง = ใช้ค่าด้านบน)</div>
-          <div style="font-size:8.5px;color:#64748b;margin-bottom:8px;">กำหนด Setting (m) แต่ละชั่วโมง เพื่อควบคุมแรงดันตามเวลา เช่น ลดแรงดันตอนกลางคืน</div>
+          <div style="font-size:8.5px;color:#64748b;margin-bottom:8px;">กำหนด Setting (m) แต่ละชั่วโมง เพื่อควบคุมแรงดันตามเวลา</div>
           <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;overflow-x:auto;">${prvSchedCells}</div>
           <div style="display:flex;gap:6px;margin-top:8px;">
             <button onclick="prvSchedReset('${el.id}')" style="flex:1;padding:5px;border-radius:8px;border:1px solid #fed7aa;background:#fff7ed;color:#92400e;font-size:9.5px;font-weight:800;cursor:pointer;font-family:var(--sans);">↩ รีเซ็ตทั้งหมด</button>
@@ -2698,14 +2810,20 @@ function saveProp() {
   if (isN) {
     if (v('i_el')           !== null) el.el           = parseFloat(v('i_el')) || 0;
     if (v('i_set')          !== null) el.setting       = parseFloat(v('i_set')) || 15;
-    if (v('i_prv_inlet')    !== null) el.prvInlet      = v('i_prv_inlet') || null;
+    // [FIX-PRV] prvInlet is now stored in a hidden input (updated by setPRVInlet toggle buttons)
+    // value '' means auto-detect; non-empty string means explicit upstream node ID
+    if (v('i_prv_inlet')    !== null) el.prvInlet      = v('i_prv_inlet').trim() || null;
     if (v('i_prv_size')     !== null) el.prvSize       = parseFloat(v('i_prv_size')) || 100;
     if (v('i_valve_open')   !== null) { el.openPercent = parseInt(v('i_valve_open')); el.status = el.openPercent === 0 ? 'CLOSED' : 'OPEN'; }
     if (v('i_wl')           !== null) el.waterLevel    = parseFloat(v('i_wl')) || 0;
     if (v('i_dia_tk')       !== null) el.tankDia       = parseFloat(v('i_dia_tk')) || 10;
     if (v('i_minl')         !== null) el.minLevel      = parseFloat(v('i_minl')) || 0.5;
     if (v('i_maxl')         !== null) el.maxLevel      = parseFloat(v('i_maxl')) || 15;
-    if (v('i_dem')          !== null) { el.baseDem = parseFloat(v('i_dem')) || 0; el.dem = el.baseDem; }
+    if (v('i_dem')          !== null) {
+      // [FIX-DEMAND] Always save to baseDem (canonical). dem will be derived in solver.
+      el.baseDem = parseFloat(v('i_dem')) || 0;
+      el.dem     = el.baseDem;  // initial sync; solver overwrites per EPS hour
+    }
     if (v('i_pump_head')    !== null) el.pumpHead      = parseFloat(v('i_pump_head')) || 30;
     if (v('i_pump_flow')    !== null) el.pumpFlow      = parseFloat(v('i_pump_flow')) || 100;
   } else {
@@ -2728,6 +2846,31 @@ function saveProp() {
 function closeProp() {
   document.getElementById('propPanel').classList.add('hidden');
   selId = null;
+}
+
+/**
+ * Set PRV upstream inlet node (direction control).
+ * Called from the direction toggle buttons in openProp.
+ * Immediately saves to model and re-opens panel so buttons update visually.
+ */
+function setPRVInlet(prvId, inletNodeId) {
+  const prv = nodeMap.get(prvId);
+  if (!prv) return;
+  // Toggle: if already set to this node, clear (back to auto)
+  if (prv.prvInlet === inletNodeId) {
+    prv.prvInlet = null;
+  } else {
+    prv.prvInlet = inletNodeId;
+  }
+  // Update hidden input so saveProp picks it up if user presses Save
+  const inp = document.getElementById('i_prv_inlet');
+  if (inp) inp.value = prv.prvInlet || '';
+  // Mark stale and re-render panel so buttons update
+  isCalculated  = false;
+  isEPSComputed = false;
+  saveState();
+  // Re-open panel immediately to refresh direction buttons
+  openProp(prvId, 'node');
 }
 
 function flipCV(id) {
