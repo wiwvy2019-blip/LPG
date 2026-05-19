@@ -1473,7 +1473,9 @@ function _solveHydraulics(hourOfDay) {
       if (entry && entry.cnt > 0) {
         // Weighted average of source heads, decayed by hop distance
         // Apply elevation correction (node head must be ≥ el)
-        n.head = Math.max(n.el, entry.sum / entry.cnt);
+        // Initial head estimate — slightly below source head to give NR room to work
+        // Do NOT hard-floor at el here; NR will find equilibrium including negative pressure
+        n.head = entry.sum / entry.cnt;
       } else {
         // Fallback: use average source head
         let avgSrcH = 0;
@@ -1505,8 +1507,8 @@ function _solveHydraulics(hourOfDay) {
   }
   updateCVStatus();
 
-  const MAX_ITER   = 200;
-  const TOL        = 1e-6;      // m³/s — convergence on flow residuals (L∞ norm)
+  const MAX_ITER   = 300;       // more headroom for complex networks with PRV + demand
+  const TOL        = 1e-6;      // m³/s — L∞ norm on continuity residuals
   const EXP_INV    = 1.0 / 1.852;
   const EXP_DER    = EXP_INV;
   let omega        = 1.0;       // SOR relaxation factor (adaptive)
@@ -1527,73 +1529,60 @@ function _solveHydraulics(hourOfDay) {
       if (n.type !== 'prv') continue;
       if (!reachable.has(n.id)) continue;
 
+      // PRV setting = desired downstream pressure [m WC]
+      // H_set = absolute head at PRV outlet [m MSL] = el + setting
       const prvSetting = (n.prvSchedule && n.prvSchedule[h] !== undefined && n.prvSchedule[h] !== null)
         ? parseFloat(n.prvSchedule[h])
         : parseFloat(n.setting) || 15.0;
       const H_set = n.el + Math.max(0, prvSetting);
 
-      // Determine upstream node: explicit prvInlet takes priority
+      // Determine upstream node
       let H_upstream = -Infinity;
       let upstreamNodeId = null;
       const _adj = adjacency.get(n.id);
 
       if (n.prvInlet && nodeMap.has(n.prvInlet) && reachable.has(n.prvInlet)) {
-        // User explicitly set upstream side
         upstreamNodeId = n.prvInlet;
         H_upstream = nodeMap.get(n.prvInlet).head;
       } else if (_adj) {
-        // Auto-detect: upstream = neighbor with HIGHEST current head
         for (const { neighborId } of _adj) {
           if (!reachable.has(neighborId)) continue;
           const nb = nodeMap.get(neighborId);
-          if (nb && nb.head > H_upstream) {
-            H_upstream = nb.head;
-            upstreamNodeId = neighborId;
-          }
+          if (nb && nb.head > H_upstream) { H_upstream = nb.head; upstreamNodeId = neighborId; }
         }
       }
 
-      let state = 'OPEN';
-      let H_prv = n.el; // fallback
+      let state, H_prv;
 
       if (upstreamNodeId === null || H_upstream === -Infinity) {
-        // Isolated PRV — treat as open with zero flow
-        state = 'OPEN';
-        H_prv = n.el;
-      } else if (H_upstream > H_set) {
-        // ACTIVE: upstream head exceeds setpoint → regulate downstream
-        state = 'ACTIVE';
-        H_prv = H_set;
+        // Isolated PRV
+        state = 'OPEN'; H_prv = n.el;
+      } else if (H_upstream > H_set + 0.001) {
+        // ACTIVE: upstream head exceeds setpoint → clamp downstream to H_set
+        state = 'ACTIVE'; H_prv = H_set;
       } else {
-        // OPEN: upstream head insufficient → full-open pass-through
-        // PRV acts as open pipe — negligible loss (use upstream head)
-        state = 'OPEN';
-        H_prv = H_upstream;
+        // OPEN: upstream below setpoint → full-open, no pressure control
+        state = 'OPEN'; H_prv = H_upstream;
       }
 
-      // CLOSED: check if any downstream neighbor pushes back higher head than
-      // the PRV's controlled downstream head (H_prv).
-      // A downstream head ABOVE H_prv means reverse flow pressure — PRV blocks it.
-      // We compare against H_prv (not H_upstream) because the PRV body sits at H_prv.
-      // If downstream head > H_prv → reverse flow → CLOSED.
-      // Also: if downstream head > H_upstream → definitely reversed relative to full system.
-      if (_adj && upstreamNodeId !== null) {
+      // CLOSED: only possible when ACTIVE — downstream pushes back above H_set
+      if (state === 'ACTIVE' && _adj && upstreamNodeId !== null) {
         for (const { neighborId } of _adj) {
           if (neighborId === upstreamNodeId) continue;
           if (!reachable.has(neighborId)) continue;
           const nb = nodeMap.get(neighborId);
-          if (nb && nb.head > (state === 'ACTIVE' ? H_prv : H_upstream) + 0.01) {
-            state = 'CLOSED';
-            H_prv = Math.max(H_prv, nb.head); // equilibrate to prevent singularity
-            break;
+          if (nb && nb.head > H_prv + 0.001) {
+            state = 'CLOSED'; H_prv = nb.head; break;
           }
         }
       }
 
       prvStates.set(n.id, { state, H_prv, H_set, upstreamNodeId });
-      // Apply head constraint immediately so NR neighbors see correct PRV head
-      n.head = H_prv;
       n.prvState = state;
+
+      // ACTIVE/CLOSED → fixed-head boundary node
+      // OPEN → regular junction, NR solves head freely through adjacent pipes
+      if (state === 'ACTIVE' || state === 'CLOSED') n.head = H_prv;
     }
   }
 
@@ -1609,8 +1598,12 @@ function _solveHydraulics(hourOfDay) {
       if (!reachable.has(n.id))     continue;
       if (closedValveNodes.has(n.id)) continue;
 
-      // Their head is controlled by updatePRVStates() each iteration
-      if (n.type === 'prv') continue;
+      // ACTIVE/CLOSED PRV = fixed-head boundary, skip NR
+      if (n.type === 'prv') {
+        const _ps = prvStates.get(n.id);
+        if (!_ps || _ps.state === 'ACTIVE' || _ps.state === 'CLOSED') continue;
+        // OPEN PRV: falls through — solved as regular junction
+      }
 
       let sumQ    = 0;   // net inflow to node (m³/s)
       let sumdQdH = 0;   // Σ|∂Q/∂H_n|
@@ -1728,12 +1721,16 @@ function _solveHydraulics(hourOfDay) {
             }
           }
         }
-        const stepCap = Math.min(10.0, 0.5 * _maxAdjDH);
+        // Step cap: large enough for fast convergence, small enough for stability
+        // Use max(2m, 0.5*maxAdjDH) to avoid deadlock when adjacent heads are equal
+        const stepCap = Math.max(2.0, Math.min(10.0, 0.5 * _maxAdjDH));
         const clampDH = Math.max(-stepCap, Math.min(stepCap, rawDH));
         n.head += omega * clampDH;
         n.head = Math.max(n.el - 50.0, n.head);  // allow negative pressure up to 50m below el (siphon)
-      } else if (residual < -1e-9) {
-        n.head = Math.max(n.el - 50.0, n.head - 0.5 * omega);
+      } else if (Math.abs(residual) > 1e-9) {
+        // sumdQdH ≈ 0 but residual nonzero: nudge head toward feasibility
+        const nudge = residual < 0 ? -0.5 * omega : 0.5 * omega;
+        n.head = Math.max(n.el - 50.0, n.head + nudge);
       }
     }
 
@@ -2954,29 +2951,36 @@ function saveProp() {
   const v = id => { const e = document.getElementById(id); return e ? e.value : null; };
 
   if (isN) {
-    if (v('i_el')           !== null) el.el           = parseFloat(v('i_el')) || 0;
-    if (v('i_set')          !== null) el.setting       = parseFloat(v('i_set')) || 15;
+    if (v('i_el')           !== null) el.el = isNaN(parseFloat(v('i_el'))) ? 0 : parseFloat(v('i_el'));
+    if (v('i_set')          !== null) {
+      const _sv = parseFloat(v('i_set'));
+      el.setting = isNaN(_sv) ? 15 : _sv;  // preserve 0 as valid setting
+    }
     // value '' means auto-detect; non-empty string means explicit upstream node ID
     if (v('i_prv_inlet')    !== null) el.prvInlet      = v('i_prv_inlet').trim() || null;
-    if (v('i_prv_size')     !== null) el.prvSize       = parseFloat(v('i_prv_size')) || 100;
+    if (v('i_prv_size')     !== null) el.prvSize = isNaN(parseFloat(v('i_prv_size'))) ? 100 : parseFloat(v('i_prv_size'));
     if (v('i_valve_open')   !== null) { el.openPercent = parseInt(v('i_valve_open')); el.status = el.openPercent === 0 ? 'CLOSED' : 'OPEN'; }
-    if (v('i_wl')           !== null) el.waterLevel    = parseFloat(v('i_wl')) || 0;
-    if (v('i_dia_tk')       !== null) el.tankDia       = parseFloat(v('i_dia_tk')) || 10;
-    if (v('i_minl')         !== null) el.minLevel      = parseFloat(v('i_minl')) || 0.5;
-    if (v('i_maxl')         !== null) el.maxLevel      = parseFloat(v('i_maxl')) || 15;
-    if (v('i_dem')          !== null) {
-      el.baseDem = parseFloat(v('i_dem')) || 0;
-      el.dem     = el.baseDem;  // initial sync; solver overwrites per EPS hour
+    if (v('i_wl')           !== null) {
+      const _wv = parseFloat(v('i_wl'));
+      el.waterLevel = isNaN(_wv) ? 0 : _wv;
     }
-    if (v('i_pump_head')    !== null) el.pumpHead      = parseFloat(v('i_pump_head')) || 30;
-    if (v('i_pump_flow')    !== null) el.pumpFlow      = parseFloat(v('i_pump_flow')) || 100;
+    if (v('i_dia_tk')       !== null) el.tankDia = isNaN(parseFloat(v('i_dia_tk'))) ? 10 : parseFloat(v('i_dia_tk'));
+    if (v('i_minl')         !== null) el.minLevel = isNaN(parseFloat(v('i_minl'))) ? 0.5 : parseFloat(v('i_minl'));
+    if (v('i_maxl')         !== null) el.maxLevel = isNaN(parseFloat(v('i_maxl'))) ? 15 : parseFloat(v('i_maxl'));
+    if (v('i_dem')          !== null) {
+      const _dv = parseFloat(v('i_dem'));
+      el.baseDem = isNaN(_dv) ? 0 : _dv;  // preserve 0 demand as intentional
+      el.dem     = el.baseDem;
+    }
+    if (v('i_pump_head')    !== null) el.pumpHead = isNaN(parseFloat(v('i_pump_head'))) ? 30 : parseFloat(v('i_pump_head'));
+    if (v('i_pump_flow')    !== null) el.pumpFlow = isNaN(parseFloat(v('i_pump_flow'))) ? 100 : parseFloat(v('i_pump_flow'));
   } else {
     const dEl = document.getElementById('i_dia');
     const lEl = document.getElementById('i_len');
     const cEl = document.getElementById('i_cvalue');
-    if (dEl) el.dia = parseFloat(dEl.value) || 100;
-    if (lEl) el.len = parseFloat(lEl.value) || 1;
-    if (cEl) el.c   = parseFloat(cEl.value) || 150;
+    if (dEl) { const _d = parseFloat(dEl.value); el.dia = isNaN(_d) || _d <= 0 ? 100 : _d; }
+    if (lEl) { const _l = parseFloat(lEl.value); el.len = isNaN(_l) || _l <= 0 ? 1 : _l; }
+    if (cEl) { const _c = parseFloat(cEl.value); el.c = isNaN(_c) || _c <= 0 ? 150 : _c; }
   }
 
   isCalculated  = false;
