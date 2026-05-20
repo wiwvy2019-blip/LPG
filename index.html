@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+m<!DOCTYPE html>
 <html lang="th">
 <head>
   <base target="_top">
@@ -75,6 +75,7 @@
     @keyframes cv-flow    { 0%{opacity:0;transform:translateX(-4px)} 60%{opacity:1} 100%{opacity:0;transform:translateX(4px)} }
     @keyframes pulse-in   { 0%{opacity:0;transform:scale(0.92)} 100%{opacity:1;transform:scale(1)} }
     @keyframes pressure-blink { 0%{box-shadow:0 0 0 0 rgba(239,68,68,0.9);opacity:1} 50%{box-shadow:0 0 0 8px rgba(239,68,68,0);opacity:0.5} 100%{box-shadow:0 0 0 0 rgba(239,68,68,0.9);opacity:1} }
+    @keyframes prv-arrow-pulse { 0%{filter:drop-shadow(0 0 2px rgba(249,115,22,0.9));opacity:1} 50%{filter:drop-shadow(0 0 8px rgba(249,115,22,0.4));opacity:0.75} 100%{filter:drop-shadow(0 0 2px rgba(249,115,22,0.9));opacity:1} }
     .node-alert > div { animation:alert-glow 1.5s infinite;background-color:#ef4444 !important; }
     .node-critical-blink > div { animation:pressure-blink 0.9s infinite !important;background-color:#ef4444 !important; }
     .user-marker-pulse { animation:user-glow 2s infinite; }
@@ -322,9 +323,10 @@
        <div style="font-size:10px;font-weight:800;color:#64748b;margin-bottom:4px;font-family:var(--sans);" id="propChartTitle">24-Hour Trend</div>
        <canvas id="propChartCanvas"></canvas>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px;padding-top:14px;border-top:1px solid #f1f5f9;">
-      <button onclick="saveProp()" style="background:linear-gradient(135deg,#2563eb,#1d4ed8);color:white;padding:13px;border-radius:13px;font-size:11px;font-weight:800;text-transform:uppercase;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;font-family:var(--sans);"><i class="fas fa-check"></i>บันทึก</button>
-      <button onclick="deleteEl()" style="background:white;border:1.5px solid #fecdd3;color:#ef4444;padding:13px;border-radius:13px;font-size:11px;font-weight:800;text-transform:uppercase;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;font-family:var(--sans);"><i class="fas fa-trash"></i>ลบออก</button>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:14px;padding-top:14px;border-top:1px solid #f1f5f9;">
+      <button onclick="saveProp()" style="background:linear-gradient(135deg,#2563eb,#1d4ed8);color:white;padding:11px;border-radius:13px;font-size:10px;font-weight:800;text-transform:uppercase;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;font-family:var(--sans);"><i class="fas fa-check"></i>บันทึก</button>
+      <button onclick="savePropAndRun()" style="background:linear-gradient(135deg,#10b981,#059669);color:white;padding:11px;border-radius:13px;font-size:10px;font-weight:800;text-transform:uppercase;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;font-family:var(--sans);"><i class="fas fa-bolt"></i>บันทึก+RUN</button>
+      <button onclick="deleteEl()" style="background:white;border:1.5px solid #fecdd3;color:#ef4444;padding:11px;border-radius:13px;font-size:10px;font-weight:800;text-transform:uppercase;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;font-family:var(--sans);"><i class="fas fa-trash"></i>ลบ</button>
     </div>
   </div>
 
@@ -1540,12 +1542,15 @@ function _solveHydraulics(hourOfDay) {
   updateCVStatus();
 
   // ─── Solver parameters ────────────────────────────────────────────────────
-  const MAX_ITER   = 200;
-  const TOL        = 1e-6;      // m³/s — convergence on flow residuals
+  const MAX_ITER   = 400;          // increased: complex networks with high demand need more
+  const TOL        = 1e-6;         // m³/s — convergence on flow residuals
   const EXP_INV    = 1.0 / 1.852;
   const EXP_DER    = EXP_INV;
-  let omega        = 1.0;       // SOR relaxation factor (adaptive)
+  let omega        = 1.0;          // SOR relaxation factor (adaptive)
 
+  // Pre-compute max source head for stepCap reference
+  let maxSourceHead = 0;
+  sources.forEach(s => { if ((s.head || 0) > maxSourceHead) maxSourceHead = s.head; });
   let iters = 0, maxRes = 0, converged = false;
   let prevMaxRes = Infinity;
 
@@ -1783,24 +1788,23 @@ function _solveHydraulics(hourOfDay) {
       const absRes   = Math.abs(residual);
       if (absRes > maxRes) maxRes = absRes;
 
-      if (sumdQdH > 1e-14) {
-        let _maxAdjDH = 1.0;
-        if (adj) {
-          for (const { neighborId: _nid } of adj) {
-            const _nb2 = nodeMap.get(_nid);
-            if (_nb2 && reachable.has(_nid)) {
-              const _dh2 = Math.abs(_nb2.head - n.head);
-              if (_dh2 > _maxAdjDH) _maxAdjDH = _dh2;
-            }
-          }
-        }
+      // Guard: if sumdQdH is extremely small (near-isolated node) but there's
+      // a significant residual (from demand), still nudge head toward zero-residual.
+      // This prevents stalling when a demand node has no nearby pressure driving head.
+      const minConductance = dem_m3s > 0 ? 1e-10 : 1e-14;
+      if (sumdQdH > minConductance) {
+        const netHeadRange = Math.max(1.0, maxSourceHead - n.el);
+        const stepCap = Math.min(netHeadRange * 0.20, 20.0);
         const rawDH  = residual / sumdQdH;
-        const stepCap = Math.min(5.0, 0.4 * _maxAdjDH);
         const clampDH = Math.max(-stepCap, Math.min(stepCap, rawDH));
         n.head += omega * clampDH;
         n.head = Math.max(n.el - 20.0, n.head);
       } else if (residual < -1e-9) {
+        // Demand exceeds available flow — drop head to signal low pressure
         n.head = Math.max(n.el - 20.0, n.head - 0.5 * omega);
+      } else if (residual > 1e-9 && sumdQdH <= minConductance) {
+        // Excess inflow but no conductance — push head up slightly
+        n.head = Math.min(maxSourceHead, n.head + 0.3 * omega);
       }
     }
 
@@ -1853,10 +1857,11 @@ function _solveHydraulics(hourOfDay) {
     }
 
     // ── Adaptive SOR damping ──────────────────────────────────────────────
-    if (maxRes > prevMaxRes * 1.5 && omega > 0.3) {
-      omega = Math.max(0.3, omega * 0.8);
-    } else if (maxRes < prevMaxRes * 0.5 && omega < 1.0) {
-      omega = Math.min(1.0, omega * 1.1);
+    // Reduce omega when residual grows (diverging) — increase when converging fast
+    if (maxRes > prevMaxRes * 1.2 && omega > 0.25) {
+      omega = Math.max(0.25, omega * 0.75);  // cut more aggressively on divergence
+    } else if (maxRes < prevMaxRes * 0.6 && omega < 1.0) {
+      omega = Math.min(1.0, omega * 1.15);   // ramp up faster on good convergence
     }
     prevMaxRes = maxRes;
 
@@ -2353,21 +2358,41 @@ function render() {
       mapItems.p[l.id] = poly;
     }
 
-    // Flow direction arrows (only after calculation)
+    // Flow direction arrows — larger and more visible; PRV gets special treatment
     if (isCalculated && Math.abs(l.flow) > 0.001) {
       const pt1 = map.latLngToLayerPoint([n1.lat, n1.lng]);
       const pt2 = map.latLngToLayerPoint([n2.lat, n2.lng]);
       let angle = Math.atan2(pt2.y - pt1.y, pt2.x - pt1.x) * 180 / Math.PI;
       if (l.flow < 0) angle += 180;
+
+      // Detect if this pipe is adjacent to a PRV node
+      const isPRVPipe = (n1.type === 'prv' || n2.type === 'prv');
+      const isHighFlow = Math.abs(l.flow) > 5; // m³/h threshold for thick arrow
+
+      // Arrow sizing: PRV pipes get larger arrows; high-flow pipes get medium
+      const arrowSize  = isPRVPipe ? 28 : isHighFlow ? 20 : 16;
+      const arrowColor = isPRVPipe ? '#f97316' : color;
+      const strokeW    = isPRVPipe ? 3 : 2;
+
+      // PRV pipes: add animated pulse ring + larger arrow
+      const animAttr = isPRVPipe
+        ? `animation:prv-arrow-pulse 1.4s ease-in-out infinite;`
+        : '';
+
       const arrowIcon = L.divIcon({
         className: '',
-        html: `<div style="transform:rotate(${angle}deg);display:flex;align-items:center;justify-content:center;width:100%;height:100%;pointer-events:none;"><svg width="14" height="14" viewBox="0 0 24 24" style="filter:drop-shadow(0 1px 2px rgba(0,0,0,0.3));"><polygon points="4,4 22,12 4,20" fill="${color}" stroke="#ffffff" stroke-width="2.5"/></svg></div>`,
-        iconSize: [20, 20],
-        iconAnchor: [10, 10]
+        html: `<div style="transform:rotate(${angle}deg);display:flex;align-items:center;justify-content:center;width:100%;height:100%;pointer-events:none;${animAttr}">
+          <svg width="${arrowSize}" height="${arrowSize}" viewBox="0 0 24 24"
+               style="filter:drop-shadow(0 1px 4px rgba(0,0,0,0.45)) ${isPRVPipe ? 'drop-shadow(0 0 6px rgba(249,115,22,0.7))' : ''};">
+            <polygon points="3,3 22,12 3,21" fill="${arrowColor}" stroke="#ffffff" stroke-width="${strokeW}" stroke-linejoin="round"/>
+          </svg>
+        </div>`,
+        iconSize: [arrowSize + 4, arrowSize + 4],
+        iconAnchor: [(arrowSize + 4) / 2, (arrowSize + 4) / 2]
       });
       const arrowMarker = L.marker(
         [(n1.lat + n2.lat) / 2, (n1.lng + n2.lng) / 2],
-        { icon:arrowIcon, interactive:false }
+        { icon: arrowIcon, interactive: false }
       ).addTo(map);
       mapItems.arrows.push(arrowMarker);
     }
@@ -2903,6 +2928,16 @@ function saveProp() {
   saveState();
   closeProp();
   render();
+}
+
+/**
+ * Save properties AND immediately trigger full EPS recalculation.
+ * Gives instant hydraulic feedback when user changes demand, elevation,
+ * pump curve, PRV setting, etc. — no need to manually press RUN.
+ */
+function savePropAndRun() {
+  saveProp();     // saves to model, marks stale, closes panel
+  calculate();    // full network EPS recalculation
 }
 
 function closeProp() {
